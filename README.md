@@ -34,11 +34,22 @@ confirm → apply        ← writes files to disk, optional git commit
 - A local LLM server (llama.cpp, Ollama, or LM Studio)
 - A GGUF model (see [recommended models](#recommended-models))
 
+## Downloads
+
+Prebuilt binaries are available on the [GitHub Releases](https://github.com/ostefani/code-orbit/releases) page for:
+
+- **Linux**
+- **Windows**
+
+### macOS
+
+A prebuilt macOS binary is not currently provided in releases. To use Code Orbit on macOS check Setup section.
+
 ## Setup
 
 ```bash
 # 1. Clone
-git clone https://github.com/yourname/code-orbit
+git clone https://github.com/ostefani/code-orbit
 cd code-orbit
 
 # 2. Create virtual environment
@@ -195,6 +206,10 @@ code-orbit/
 - [ ] Two-pass planning and execution workflow
 - [ ] `.agentignore` support for project-specific exclusions
 - [ ] Web UI with browser-based workflow
+
+## Contributing
+
+Please see CONTRIBUTING.md for contribution and PR guidelines.
 
 ## License
 
