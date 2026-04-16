@@ -10,6 +10,12 @@ A local, agentic code editor compatible with any OpenAI-compatible local LLM pro
 
 No cloud. No Docker. No API keys.
 
+## Demo
+
+<video src="docs/assets/demo.mov" autoplay loop muted width="100%" controls>
+  Your browser does not support the video tag.
+</video>
+
 ## How it works
 
 ```
