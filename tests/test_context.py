@@ -65,8 +65,9 @@ def test_context_token_limit(temp_codebase: Path) -> None:
     assert "large.txt" not in paths
 
 
-def test_build_context_skips_symlinks(temp_codebase: Path, tmp_path: Path) -> None:
-    outside = tmp_path / "outside.txt"
+def test_build_context_skips_symlinks(temp_codebase: Path, tmp_path_factory) -> None:
+    outside_dir = tmp_path_factory.mktemp("outside")
+    outside = outside_dir / "outside.txt"
     outside.write_text("secret", encoding="utf-8")
     (temp_codebase / "linked.txt").symlink_to(outside)
 
