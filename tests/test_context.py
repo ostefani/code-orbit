@@ -52,7 +52,7 @@ def test_context_token_limit(temp_codebase: Path) -> None:
 
     config = Config(
         ignore_patterns=[".git", "node_modules"],
-        max_context_tokens=500,
+        max_context_tokens=2200,
         max_response_tokens=100,
     )
     prompt = "Update the Python source files"

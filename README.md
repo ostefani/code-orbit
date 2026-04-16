@@ -59,7 +59,7 @@ llama-server \
 cp config.yaml config.local.yaml   # optional — config.yaml works as-is
 
 # 6. Using other local providers (Optional)
-Code Orbit works with any OpenAI-compatible local server. 
+Code Orbit works with any OpenAI-compatible local server.
 
 **Ollama**
 1. Start Ollama and pull your model (e.g., `ollama pull qwen2.5-coder:32b`).
@@ -184,22 +184,17 @@ code-orbit/
     └── extensions.json
 ```
 
-## Limitations & known issues
+## Roadmap
 
-- **Large repos**: Files are included by size (smallest first) until the context window is full. Large files may be skipped. For very large codebases, run the agent on a subdirectory.
-- **No RAG yet**: Context is built by direct inclusion, not semantic search. Adding embeddings-based retrieval is the logical next step.
-- **Model compliance**: Some models occasionally ignore the JSON-only instruction and add markdown fences — the agent strips these, but malformed JSON will throw. Use models with strong instruction following (see above).
-- **Binary files**: Automatically excluded. Only UTF-8 text files are included.
-
-## Extending
-
-Likely things you'll want to add:
-
-- **RAG**: Use `sentence-transformers` + `chromadb` to retrieve only relevant files instead of bulk inclusion
-- **Watch mode**: `watchdog` to re-run on file changes
-- **Multi-step planning**: Two-pass approach — first ask the model to plan, then execute
-- **`.agentignore`**: Project-specific ignore patterns alongside `.gitignore`
-- **Web UI**: Wrap with FastAPI + HTMX for a browser interface
+- [x] Direct codebase inclusion for context building
+- [x] JSON-only change output with patch application
+- [x] Tests for context building and patch application
+- [ ] Embeddings-based retrieval (RAG) for semantic file selection
+- [ ] Retry on invalid model output with stricter JSON recovery
+- [ ] File watch mode for optional automatic re-run on code changes
+- [ ] Two-pass planning and execution workflow
+- [ ] `.agentignore` support for project-specific exclusions
+- [ ] Web UI with browser-based workflow
 
 ## License
 
