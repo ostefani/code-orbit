@@ -1,4 +1,4 @@
-# \_Code Orbit\_
+# ◉ CodeOrbit
 
 ![Python Version](https://img.shields.io/badge/python-3.14-blue)
 ![Backend](https://img.shields.io/badge/backend-llama.cpp-orange)

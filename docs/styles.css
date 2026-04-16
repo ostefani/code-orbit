@@ -187,9 +187,10 @@ code,
 }
 
 .logo-image {
+    display: inline-flex;
     width: 30px;
     height: 30px;
-    margin-right: 10px;
+    margin-right: 12px;
 }
 
 .nav-toggle {
@@ -609,7 +610,7 @@ main {
 
 /* Install Section */
 .install-section {
-    margin: 120px 0;
+    margin: 120px 0 0;
 }
 
 .comment {
@@ -654,7 +655,7 @@ main {
 }
 
 .install-content h2 {
-    margin: 0 0 1rem 0;
+    margin: 0 0 32px 0;
     font-size: 2.8rem;
     line-height: 1.1;
     letter-spacing: -0.02em;
@@ -663,7 +664,7 @@ main {
 
 .install-subtitle {
     margin: 0 0 72px 0;
-    font-size: 1.05rem;
+    font-size: 1.125rem;
     color: var(--text-muted);
     line-height: 1.5;
 }
