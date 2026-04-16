@@ -7,11 +7,11 @@ default_profile: 'qwen'
 
 profiles:
     ollama:
-        api_base: 'http://localhost:11434/v1'  # Default Ollama port
-        model: 'qwen2.5-coder:32b'             # Change to your local model name
+        api_base: 'http://localhost:11434/v1' # Default Ollama port
+        model: 'qwen2.5-coder:32b' # Change to your local model name
         max_context_tokens: 32768
     lm-studio:
-        api_base: 'http://localhost:1234/v1'   # Default LM Studio port
+        api_base: 'http://localhost:1234/v1' # Default LM Studio port
         model: 'model-identifier-here'
         max_context_tokens: 32768
     gpt-oss-20:

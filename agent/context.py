@@ -5,16 +5,7 @@ from dataclasses import dataclass
 
 from .config import Config
 from .token_counter import count_tokens_int
-
-
-@dataclass
-class FileEntry:
-    path: str  # relative path
-    content: str
-    size: int
-    tokens: int  # exact or estimated token count
-
-
+from .llm import SYSTEM_PROMPT
 from .constants import (
     SOURCE_EXTENSIONS,
     LOW_VALUE_FILENAMES,
@@ -24,7 +15,13 @@ from .constants import (
     STOPWORDS,
 )
 
-TEST_HINTS: set[str] = {"test", "tests", "spec", "__tests__"}
+
+@dataclass
+class FileEntry:
+    path: str  # relative path
+    content: str
+    size: int
+    tokens: int  # rendered token count as included in final context
 
 
 def _is_ignored(path: Path, root: Path, patterns: list[str]) -> bool:
@@ -102,6 +99,42 @@ def _score_file_entry(entry: FileEntry, prompt: str) -> float:
     return score
 
 
+def _render_file_block(path: str, content: str) -> str:
+    return f'<file path="{path}">\n{content}\n</file>\n'
+
+
+def _compute_context_budget(prompt: str, config: Config) -> int:
+    """
+    Compute how many tokens may be spent on file blocks only.
+
+    Subtract:
+    - system prompt
+    - task wrapper and prompt text
+    - outer codebase wrapper
+    - reserved response tokens
+    - small safety margin
+    """
+    scaffold = (
+        f"{SYSTEM_PROMPT}\n" f"<codebase>\n</codebase>\n" f"<task>\n{prompt}\n</task>"
+    )
+    base_overhead = count_tokens_int(scaffold, config)
+
+    if config.tokenizer_backend == "estimate":
+        # Estimate backend is intentionally conservative.
+        safety_margin = max(128, int(config.max_context_tokens * 0.10))
+    else:
+        # Exact tokenizers need only a small buffer for drift.
+        safety_margin = 64
+
+    budget = (
+        config.max_context_tokens
+        - config.max_response_tokens
+        - base_overhead
+        - safety_margin
+    )
+    return max(0, budget)
+
+
 def build_context(
     root: str, prompt: str, config: Config
 ) -> tuple[list[FileEntry], str]:
@@ -109,13 +142,8 @@ def build_context(
     Walk the directory and collect files into context.
     Returns (file_entries, formatted_context_string).
 
-    Files are ranked by lightweight relevance heuristics:
-    - prompt-term path/name matches
-    - file extension priority
-    - shallow directory preference
-    - size-aware penalties
-
-    Context is then packed within the token budget.
+    Files are ranked by relevance heuristics, then packed into the
+    remaining file-token budget.
     """
     root_path = Path(root).resolve()
     entries: list[FileEntry] = []
@@ -139,7 +167,11 @@ def build_context(
             try:
                 content = fpath.read_text(encoding="utf-8", errors="ignore")
                 rel = str(fpath.relative_to(root_path))
-                tokens = count_tokens_int(content, config)
+
+                # Count the file exactly as it will appear in the final context.
+                rendered = _render_file_block(rel, content)
+                tokens = count_tokens_int(rendered, config)
+
                 entries.append(
                     FileEntry(
                         path=rel,
@@ -151,7 +183,6 @@ def build_context(
             except (OSError, PermissionError):
                 continue
 
-    # Rank by relevance first, then by token cost, then path for stable ordering.
     entries.sort(
         key=lambda entry: (
             -_score_file_entry(entry, prompt),
@@ -160,7 +191,7 @@ def build_context(
         )
     )
 
-    token_budget = config.max_context_tokens - config.max_response_tokens - 2048
+    token_budget = _compute_context_budget(prompt, config)
     used_tokens = 0
     included: list[FileEntry] = []
     skipped: list[str] = []
@@ -188,7 +219,7 @@ def build_context(
         if len(skipped) > 5:
             print(f"   ... and {len(skipped) - 5} more")
 
-    print(f"\n📂 Context: {len(included)} files | ~{used_tokens:,} tokens")
+    print(f"\n📂 Context: {len(included)} files | ~{used_tokens:,} file tokens")
     return included, context_str
 
 
