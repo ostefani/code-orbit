@@ -1,7 +1,7 @@
-import yaml
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields as dataclass_fields
 from pathlib import Path
 from typing import Optional
+import yaml
 
 
 @dataclass
@@ -11,25 +11,11 @@ class Config:
     api_key: str = "dummy"
     model: str = "local"
 
-    # Context window (tokens). Set based on your model.
     max_context_tokens: int = 16384
     max_response_tokens: int = 4096
-
-    # ── Token counting ────────────────────────────────────────────────────────
-    # Which backend to use for counting tokens when building context.
-    #   "tokenizers_json"  exact counts via a local tokenizer.json  (recommended)
-    #   "tiktoken"         exact counts for OpenAI-family models
-    #   "estimate"         chars // 3 heuristic, no dependencies (default)
     tokenizer_backend: str = "estimate"
 
-    # Absolute or ~ path to your model's tokenizer.json.
-    # Required when tokenizer_backend = "tokenizers_json".
-    # Keep this pointing at the file next to your GGUF — do not copy it here.
-    tokenizer_model_path: Optional[str] = None
-
-    # Model name passed to tiktoken (e.g. "gpt-4o").
-    # Required when tokenizer_backend = "tiktoken".
-    # Falls back to config.model if not set.
+    tokenizer_model_path: Optional[Path] = None
     tokenizer_model: Optional[str] = None
 
     # Files to skip when building context
@@ -64,46 +50,52 @@ class Config:
     # Max file size to include in context (bytes)
     max_file_size: int = 100_000
 
-    # Show diffs and ask for confirmation before applying
     interactive: bool = True
 
-    # Auto-commit changes with git
     auto_commit: bool = False
 
     @classmethod
     def load(
-        cls, path: str = "config.yaml", profile_name: Optional[str] = None
+        cls, path: str | Path = "config.yaml", profile_name: Optional[str] = None
     ) -> "Config":
-        config_path = Path(path)
-        data = {}
-        if config_path.exists():
-            with open(config_path) as f:
-                data = yaml.safe_load(f) or {}
+        config_path = Path(path).expanduser().resolve()
 
-        # Start with base data
+        data: dict = {}
+        if config_path.exists():
+            data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+
+        valid_keys = {f.name for f in dataclass_fields(cls)}
         base_params = {
-            k: v for k, v in data.items() if hasattr(cls, k) and k != "profiles"
+            k: v for k, v in data.items() if k in valid_keys and k != "profiles"
         }
 
-        # Identify profile
-        profiles = data.get("profiles", {})
-        selected_profile_name = profile_name or data.get("default_profile")
+        profiles: dict = data.get("profiles", {})
+        selected_profile_name: Optional[str] = profile_name or data.get(
+            "default_profile"
+        )
 
-        # Apply profile overrides
-        profile_data = {}
-        if selected_profile_name and selected_profile_name in profiles:
-            profile_data = profiles[selected_profile_name]
-            print(profile_data)
-        elif selected_profile_name:
-            print(f"⚠️  Profile '{selected_profile_name}' not found, using base config.")
+        profile_data: dict = {}
+        if selected_profile_name:
+            if selected_profile_name in profiles:
+                profile_data = profiles[selected_profile_name]
+                print(f"✅ Using profile '{selected_profile_name}'")
+            else:
+                available = ", ".join(profiles.keys()) or "none"
+                print(
+                    f"⚠️  Profile '{selected_profile_name}' not found "
+                    f"(available: {available}). Using base config."
+                )
 
-        # Merge: base < profile_overrides
-        params = {**base_params, **profile_data}
+        merged = {**base_params, **profile_data}
 
-        # Filter to only valid dataclass fields
-        from dataclasses import fields
+        raw_path = merged.get("tokenizer_model_path")
+        if raw_path is not None:
+            p = Path(raw_path).expanduser()
+            if not p.is_absolute():
+                p = (config_path.parent / p).resolve()
+            else:
+                p = p.resolve()
+            merged["tokenizer_model_path"] = p
 
-        valid_keys = {f.name for f in fields(cls)}
-        valid_params = {k: v for k, v in params.items() if k in valid_keys}
-
+        valid_params = {k: v for k, v in merged.items() if k in valid_keys}
         return cls(**valid_params)
