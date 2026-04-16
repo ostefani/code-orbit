@@ -57,7 +57,7 @@
 
                     <div class="container hero-inner">
                         <span class="hero-kicker reveal">Local-first AI workflow</span>
-                        <h1 class="reveal reveal-delay-1">Navigate Your Development Universe</h1>
+                        <h1 class="reveal reveal-delay-1">Navigate Your Development<br />Universe</h1>
                         <p class="reveal reveal-delay-2">
                             A high-performance, local-first AI coding agent. Privacy focused, context-aware, and built
                             for speed.
@@ -567,7 +567,7 @@
 
                     async function typeNode(node, parent) {
                         if (node.nodeType === Node.TEXT_NODE) {
-                            const text = node.textContent;
+                            const text = node.textContent.replace(/\n\s*/g, "");
                             if (!text.trim()) {
                                 parent.appendChild(document.createTextNode(text));
                                 return;

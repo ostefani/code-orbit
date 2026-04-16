@@ -44,6 +44,9 @@
     --header-height: 4.75rem;
     --section-py: 40px; /* Unified section spacing */
 
+    --vp-min: 23.4375; /* 375px in rem */
+    --vp-max: 80; /* 1280px in rem */
+
     /* Animation variables */
     --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
     --trans-base: 0.25s ease;
@@ -142,7 +145,7 @@ code,
 
 .section-heading h2 {
     margin: 0 0 32px 0;
-    font-size: clamp(2rem, 4vw, 2.4rem);
+    font-size: clamp(2rem, calc(1.5rem + 2vw), 2.8rem);
     line-height: 1.05;
     letter-spacing: -0.04em;
 }
@@ -150,6 +153,7 @@ code,
 .section-heading p {
     margin: 0;
     color: var(--text-muted);
+    font-size: 1.125rem;
 }
 
 /* Header */
@@ -322,13 +326,13 @@ main {
 }
 
 .hero h1 {
-    margin: 32px 0;
-    font-size: clamp(2rem, 7vw, 4rem);
+    margin: clamp(1.8rem, calc(1.5rem + 2.2vw), 2.7rem) 0;
+    font-size: clamp(2.5rem, calc(1.9rem + 2.2vw), 3.5rem);
     line-height: 0.95;
 }
 
 .hero p {
-    max-width: 60%;
+    max-width: 80%;
     margin: 32px auto 0;
     font-size: 1rem;
     color: var(--text-muted);
@@ -670,7 +674,7 @@ main {
     border: 1px solid rgba(255, 255, 255, 0.04);
     border-radius: 6px;
     padding: 12px;
-    min-width: 360px;
+    min-width: 320px;
     margin-bottom: 1.5rem;
 }
 
@@ -758,7 +762,7 @@ main {
     }
 
     .container {
-        max-width: 640px;
+        max-width: 580px;
     }
 
     .nav-toggle {
@@ -778,9 +782,14 @@ main {
     .site-nav a {
         padding: 8px 24px;
     }
+
     .hero p {
+        max-width: 80%;
+        margin: 32px auto 0;
         font-size: 1.125rem;
+        color: var(--text-muted);
     }
+
     .hero-actions {
         flex-direction: row;
         align-items: center;
@@ -794,6 +803,16 @@ main {
     }
     .install-card {
         padding: 112px 12px;
+    }
+
+    .install-cmd-wrap {
+        min-width: 360px;
+    }
+}
+
+@media (min-width: 960px) {
+    .container {
+        max-width: 720px;
     }
 }
 
