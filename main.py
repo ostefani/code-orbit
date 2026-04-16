@@ -8,13 +8,13 @@ Usage:
 """
 
 import argparse
-import sys
 import json
+import sys
 from pathlib import Path
+from typing import Any
 
 from rich.console import Console
 from rich.panel import Panel
-from rich.status import Status
 from rich.prompt import Confirm, Prompt
 from rich import print as rprint
 
@@ -25,6 +25,7 @@ from agent.patcher import apply_changes, git_commit, preview_changes
 
 console = Console()
 HISTORY_FILE = ".code-orbit-history"
+ALLOWED_ACTIONS = {"create", "update", "delete"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -64,6 +65,11 @@ def parse_args() -> argparse.Namespace:
         "--auto-commit",
         action="store_true",
         help="Auto git commit after applying changes",
+    )
+    parser.add_argument(
+        "--allow-delete",
+        action="store_true",
+        help="Allow LLM-proposed delete actions",
     )
     parser.add_argument(
         "--tree",
@@ -116,6 +122,75 @@ def get_prompt_interactively(history: list[str]) -> str:
     )
 
 
+def validate_llm_result(result: Any, config: Config) -> tuple[str, list[dict[str, str]]]:
+    if not isinstance(result, dict):
+        raise ValueError("Model response must be a JSON object.")
+
+    summary = result.get("summary", "No summary provided.")
+    if not isinstance(summary, str):
+        raise ValueError("Model response field 'summary' must be a string.")
+
+    raw_changes = result.get("changes", [])
+    if not isinstance(raw_changes, list):
+        raise ValueError("Model response field 'changes' must be a list.")
+
+    validated_changes: list[dict[str, str]] = []
+    seen_paths: set[str] = set()
+
+    for index, change in enumerate(raw_changes, 1):
+        if not isinstance(change, dict):
+            raise ValueError(f"Change #{index} must be an object.")
+
+        path = change.get("path")
+        action = change.get("action")
+
+        if not isinstance(path, str) or not path.strip():
+            raise ValueError(f"Change #{index} is missing a valid 'path' string.")
+        if Path(path).is_absolute():
+            raise ValueError(f"Change #{index} uses an absolute path: {path!r}")
+
+        normalized_path = path.strip()
+        normalized_parts = Path(normalized_path).parts
+        if any(part == ".." for part in normalized_parts):
+            raise ValueError(
+                f"Change #{index} uses parent-directory traversal: {normalized_path!r}"
+            )
+        if normalized_path in seen_paths:
+            raise ValueError(f"Duplicate change path detected: {normalized_path!r}")
+        seen_paths.add(normalized_path)
+
+        if action not in ALLOWED_ACTIONS:
+            raise ValueError(
+                f"Change #{index} has unsupported action {action!r}. "
+                f"Allowed actions: {sorted(ALLOWED_ACTIONS)}"
+            )
+
+        if action == "delete":
+            if not config.allow_delete:
+                raise ValueError(
+                    "Model proposed a delete action, but deletes are disabled. "
+                    "Re-run with --allow-delete or set allow_delete: true in config."
+                )
+            validated_changes.append({"path": normalized_path, "action": action})
+            continue
+
+        content = change.get("content")
+        if not isinstance(content, str):
+            raise ValueError(
+                f"Change #{index} action {action!r} requires string field 'content'."
+            )
+
+        validated_changes.append(
+            {
+                "path": normalized_path,
+                "action": action,
+                "content": content,
+            }
+        )
+
+    return summary, validated_changes
+
+
 def main() -> None:
     args = parse_args()
     try:
@@ -129,6 +204,8 @@ def main() -> None:
         config.interactive = False
     if args.auto_commit:
         config.auto_commit = True
+    if args.allow_delete:
+        config.allow_delete = True
 
     history = load_history()
     prompt = args.prompt
@@ -176,8 +253,11 @@ def main() -> None:
         console.print(f"\n[bold red]Error calling LLM:[/bold red] {e}")
         sys.exit(1)
 
-    summary = result.get("summary", "No summary provided.")
-    changes = result.get("changes", [])
+    try:
+        summary, changes = validate_llm_result(result, config)
+    except ValueError as e:
+        console.print(f"\n[bold red]Invalid model response:[/bold red] {e}")
+        sys.exit(1)
 
     rprint(f"\n[bold cyan]💡 Summary:[/bold cyan] {summary}")
     rprint(f"[dim]Files to change:[/dim] {len(changes)}")

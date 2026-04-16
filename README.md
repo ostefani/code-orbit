@@ -10,6 +10,12 @@ A local, agentic code editor compatible with any OpenAI-compatible local LLM pro
 
 No cloud. No Docker. No API keys.
 
+## Demo
+
+<video src="docs/assets/demo.mov" autoplay loop muted width="100%" controls>
+  Your browser does not support the video tag.
+</video>
+
 ## How it works
 
 ```
@@ -36,14 +42,8 @@ confirm → apply        ← writes files to disk, optional git commit
 
 ## Downloads
 
-Prebuilt binaries are available on the [GitHub Releases](https://github.com/ostefani/code-orbit/releases) page for:
-
-- **Linux**
-- **Windows**
-
-### macOS
-
-A prebuilt macOS binary is not currently provided in releases. To use Code Orbit on macOS check Setup section.
+GitHub Releases publish the Python package artifacts (`.whl` and source tarball).
+Install from a release or from source using the setup steps below.
 
 ## Setup
 

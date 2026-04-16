@@ -1,19 +1,19 @@
 import fnmatch
 import re
-from pathlib import Path
 from dataclasses import dataclass
+from pathlib import Path
 
 from .config import Config
-from .token_counter import count_tokens_int
-from .llm import SYSTEM_PROMPT
 from .constants import (
-    SOURCE_EXTENSIONS,
-    LOW_VALUE_FILENAMES,
-    LOW_VALUE_DIRS,
-    TEST_HINTS,
     CONFIG_HINTS,
+    LOW_VALUE_DIRS,
+    LOW_VALUE_FILENAMES,
+    SOURCE_EXTENSIONS,
     STOPWORDS,
+    TEST_HINTS,
 )
+from .llm import SYSTEM_PROMPT
+from .token_counter import count_tokens_int
 
 
 @dataclass
@@ -22,6 +22,12 @@ class FileEntry:
     content: str
     size: int
     tokens: int  # rendered token count as included in final context
+
+
+@dataclass(frozen=True)
+class FileCandidate:
+    path: str
+    size_bytes: int
 
 
 def _is_ignored(path: Path, root: Path, patterns: list[str]) -> bool:
@@ -37,14 +43,42 @@ def _is_ignored(path: Path, root: Path, patterns: list[str]) -> bool:
     return False
 
 
+def _is_within_root(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _safe_candidate(root: Path, path: Path) -> FileCandidate | None:
+    try:
+        if path.is_symlink():
+            return None
+        resolved = path.resolve()
+        resolved.relative_to(root)
+        stat_result = resolved.stat()
+    except (OSError, PermissionError, ValueError):
+        return None
+
+    return FileCandidate(
+        path=str(path.relative_to(root)),
+        size_bytes=stat_result.st_size,
+    )
+
+
 def _extract_prompt_terms(prompt: str) -> set[str]:
     words = re.findall(r"[a-zA-Z0-9_.-]+", prompt.lower())
     return {word for word in words if len(word) > 1 and word not in STOPWORDS}
 
 
 def _score_file_entry(entry: FileEntry, prompt: str) -> float:
-    path_obj = Path(entry.path)
-    path_lower = entry.path.lower()
+    return _score_path(entry.path, entry.tokens, prompt)
+
+
+def _score_path(path: str, estimated_tokens: int, prompt: str) -> float:
+    path_obj = Path(path)
+    path_lower = path.lower()
     name_lower = path_obj.name.lower()
     suffix = path_obj.suffix.lower()
     parts_lower = {part.lower() for part in path_obj.parts}
@@ -87,13 +121,13 @@ def _score_file_entry(entry: FileEntry, prompt: str) -> float:
         score += 22
 
     # 7. Size-aware penalty: large files are more expensive.
-    if entry.tokens > 12000:
+    if estimated_tokens > 12000:
         score -= 50
-    elif entry.tokens > 8000:
+    elif estimated_tokens > 8000:
         score -= 30
-    elif entry.tokens > 4000:
+    elif estimated_tokens > 4000:
         score -= 15
-    elif entry.tokens > 2000:
+    elif estimated_tokens > 2000:
         score -= 6
 
     return score
@@ -146,7 +180,7 @@ def build_context(
     remaining file-token budget.
     """
     root_path = Path(root).resolve()
-    entries: list[FileEntry] = []
+    candidates: list[FileCandidate] = []
 
     for dirpath, dirnames, filenames in root_path.walk():
         current = dirpath
@@ -155,39 +189,26 @@ def build_context(
             d
             for d in dirnames
             if not _is_ignored(current / d, root_path, config.ignore_patterns)
+            and not (current / d).is_symlink()
+            and _is_within_root(current / d, root_path)
         ]
 
         for fname in sorted(filenames):
             fpath = current / fname
             if _is_ignored(fpath, root_path, config.ignore_patterns):
                 continue
-            if fpath.stat().st_size > config.max_file_size:
+            candidate = _safe_candidate(root_path, fpath)
+            if candidate is None:
                 continue
-
-            try:
-                content = fpath.read_text(encoding="utf-8", errors="ignore")
-                rel = str(fpath.relative_to(root_path))
-
-                # Count the file exactly as it will appear in the final context.
-                rendered = _render_file_block(rel, content)
-                tokens = count_tokens_int(rendered, config)
-
-                entries.append(
-                    FileEntry(
-                        path=rel,
-                        content=content,
-                        size=len(content),
-                        tokens=tokens,
-                    )
-                )
-            except (OSError, PermissionError):
+            if candidate.size_bytes > config.max_file_size:
                 continue
+            candidates.append(candidate)
 
-    entries.sort(
-        key=lambda entry: (
-            -_score_file_entry(entry, prompt),
-            entry.tokens,
-            entry.path,
+    candidates.sort(
+        key=lambda candidate: (
+            -_score_path(candidate.path, max(1, candidate.size_bytes // 3), prompt),
+            candidate.size_bytes,
+            candidate.path,
         )
     )
 
@@ -196,12 +217,29 @@ def build_context(
     included: list[FileEntry] = []
     skipped: list[str] = []
 
-    for entry in entries:
-        if used_tokens + entry.tokens > token_budget:
-            skipped.append(entry.path)
+    for candidate in candidates:
+        path = root_path / candidate.path
+        try:
+            content = path.read_text(encoding="utf-8", errors="ignore")
+        except (OSError, PermissionError):
             continue
-        included.append(entry)
-        used_tokens += entry.tokens
+
+        rendered = _render_file_block(candidate.path, content)
+        tokens = count_tokens_int(rendered, config)
+
+        if used_tokens + tokens > token_budget:
+            skipped.append(candidate.path)
+            continue
+
+        included.append(
+            FileEntry(
+                path=candidate.path,
+                content=content,
+                size=len(content),
+                tokens=tokens,
+            )
+        )
+        used_tokens += tokens
 
     parts = ["<codebase>"]
     for entry in included:
@@ -234,12 +272,18 @@ def get_file_tree(root: str, config: Config) -> str:
             d
             for d in sorted(dirnames)
             if not _is_ignored(current / d, root_path, config.ignore_patterns)
+            and not (current / d).is_symlink()
+            and _is_within_root(current / d, root_path)
         ]
         depth = len(current.relative_to(root_path).parts)
         indent = "  " * depth
         for fname in sorted(filenames):
             fpath = current / fname
-            if not _is_ignored(fpath, root_path, config.ignore_patterns):
+            if (
+                not _is_ignored(fpath, root_path, config.ignore_patterns)
+                and not fpath.is_symlink()
+                and _is_within_root(fpath, root_path)
+            ):
                 lines.append(f"{indent}{fname}")
 
     return "\n".join(lines)
