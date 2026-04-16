@@ -54,6 +54,8 @@ class Config:
 
     auto_commit: bool = False
 
+    allow_delete: bool = False
+
     @classmethod
     def load(
         cls, path: str | Path = "config.yaml", profile_name: Optional[str] = None

@@ -63,3 +63,16 @@ def test_context_token_limit(temp_codebase: Path) -> None:
     assert "src/main.py" in paths
     assert "src/utils.py" in paths
     assert "large.txt" not in paths
+
+
+def test_build_context_skips_symlinks(temp_codebase: Path, tmp_path: Path) -> None:
+    outside = tmp_path / "outside.txt"
+    outside.write_text("secret", encoding="utf-8")
+    (temp_codebase / "linked.txt").symlink_to(outside)
+
+    config = Config(ignore_patterns=[".git", "node_modules"])
+    entries, context_str = build_context(str(temp_codebase), "Inspect files", config)
+
+    paths = [entry.path for entry in entries]
+    assert "linked.txt" not in paths
+    assert "secret" not in context_str
