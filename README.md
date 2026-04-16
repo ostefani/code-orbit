@@ -1,12 +1,12 @@
 # ◉ CodeOrbit
 
 ![Python Version](https://img.shields.io/badge/python-3.14-blue)
-![Backend](https://img.shields.io/badge/backend-llama.cpp-orange)
+![Backend](https://img.shields.io/badge/backend-Local--LLM-orange)
 ![Interface](https://img.shields.io/badge/UI-Rich-green)
 ![Type](https://img.shields.io/badge/type-CLI-informational)
 ![License](https://img.shields.io/badge/license-MIT-success)
 
-A local, agentic code editor powered by [llama.cpp](https://github.com/ggerganov/llama.cpp). Point it at any directory, give it a prompt, and it reads your codebase, plans changes, shows you a diff, and applies them.
+A local, agentic code editor compatible with any OpenAI-compatible local LLM provider ([llama.cpp](https://github.com/ggerganov/llama.cpp), [Ollama](https://ollama.com), [LM Studio](https://lmstudio.ai)). Point it at any directory, give it a prompt, and it reads your codebase, plans changes, shows you a diff, and applies them.
 
 No cloud. No Docker. No API keys.
 
@@ -19,7 +19,7 @@ your prompt
 build context          ← walks your directory, respects .gitignore-style patterns
     │                    fits files within your model's context window
     ▼
-call llama.cpp         ← OpenAI-compatible REST API at localhost:8080
+call LLM provider    ← OpenAI-compatible REST API (llama.cpp, Ollama, etc.)
     │                    model returns JSON: { summary, changes[] }
     ▼
 preview diff           ← colored unified diff per file
@@ -31,7 +31,7 @@ confirm → apply        ← writes files to disk, optional git commit
 ## Requirements
 
 - Python 3.14+ (relies on `pathlib.Path.walk`)
-- llama.cpp built with server support (`llama-server`)
+- A local LLM server (llama.cpp, Ollama, or LM Studio)
 - A GGUF model (see [recommended models](#recommended-models))
 
 ## Setup
@@ -57,6 +57,19 @@ llama-server \
 
 # 5. Copy and edit config
 cp config.yaml config.local.yaml   # optional — config.yaml works as-is
+
+# 6. Using other local providers (Optional)
+Code Orbit works with any OpenAI-compatible local server. 
+
+**Ollama**
+1. Start Ollama and pull your model (e.g., `ollama pull qwen2.5-coder:32b`).
+2. Update `config.yaml` or use the `--profile ollama` flag.
+3. Set `api_base: http://localhost:11434/v1`.
+
+**LM Studio**
+1. Open LM Studio and start the "Local Server".
+2. Set `api_base: http://localhost:1234/v1` in your config.
+3. Use the model identifier provided by LM Studio in the `model` field.
 ```
 
 ## Usage
