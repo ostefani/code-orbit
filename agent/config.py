@@ -93,6 +93,7 @@ class Config:
         profile_data = {}
         if selected_profile_name and selected_profile_name in profiles:
             profile_data = profiles[selected_profile_name]
+            print(profile_data)
         elif selected_profile_name:
             print(f"⚠️  Profile '{selected_profile_name}' not found, using base config.")
 
