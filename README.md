@@ -12,9 +12,7 @@ No cloud. No Docker. No API keys.
 
 ## Demo
 
-<video src="docs/assets/demo.mov" autoplay loop muted width="100%" controls>
-  Your browser does not support the video tag.
-</video>
+https://github.com/user-attachments/assets/2481e3f3-1b40-4340-bfa0-9ab1d45be341
 
 ## How it works
 
