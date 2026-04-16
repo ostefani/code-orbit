@@ -2,8 +2,9 @@
 max_context_tokens: 16384
 max_response_tokens: 16384
 
-# Profiles: select with --profile or -P
-default_profile: 'qwen'
+# Profiles: select with --profile / -P
+# 'default_profile' is used when no --profile flag is passed.
+default_profile: 'qwen-coder'
 
 profiles:
     ollama:
