@@ -1,0 +1,623 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Code Orbit | Navigate Your Development Universe</title>
+        <meta
+            name="description"
+            content="A high-performance, local-first AI coding agent. Privacy focused, context-aware, and built for speed." />
+
+        <meta property="og:title" content="Code Orbit" />
+        <meta property="og:description" content="Open-source local-first AI coding agent written in Python." />
+        <meta property="og:type" content="website" />
+        <meta property="og:image" content="assets/cover_image.jpg" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:image" content="assets/cover_image.jpg" />
+
+        <link rel="stylesheet" href="styles.css" />
+
+        <link rel="icon" href="favicon.ico" sizes="any" />
+        <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png" />
+        <link rel="icon" type="image/png" sizes="16x16" href="favicon-16x16.png" />
+        <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png" />
+        <link rel="icon" type="image/png" sizes="192x192" href="android-chrome-192x192.png" />
+        <link rel="icon" type="image/png" sizes="512x512" href="android-chrome-512x512.png" />
+    </head>
+    <body>
+        <div class="glow-bg"></div>
+        <div class="grid-bg"></div>
+        <div class="site-shell">
+            <header class="site-header">
+                <div class="container header-inner">
+                    <a class="logo" href="#hero" aria-label="Code Orbit home">
+                        <img class="logo-image" src="assets/logo.svg" /> CODE ORBIT
+                    </a>
+
+                    <nav class="site-nav" id="site-nav">
+                        <a href="#demo">Demo</a>
+                        <a href="#features">Features</a>
+                        <a href="#install">Get Started</a>
+                        <a
+                            class="btn btn-solid btn-small"
+                            href="https://github.com/user/code-orbit"
+                            target="_blank"
+                            rel="noreferrer"
+                            >GitHub ↗</a
+                        >
+                    </nav>
+                </div>
+            </header>
+
+            <main>
+                <section class="hero" id="hero">
+                    <div class="hero-media" aria-hidden="true">
+                        <img src="assets/hero_2.png" alt="" />
+                    </div>
+
+                    <div class="container hero-inner">
+                        <span class="hero-kicker reveal">Local-first AI workflow</span>
+                        <h1 class="reveal reveal-delay-1">Navigate Your Development Universe</h1>
+                        <p class="reveal reveal-delay-2">
+                            A high-performance, local-first AI coding agent. Privacy focused, context-aware, and built
+                            for speed.
+                        </p>
+                        <div class="hero-actions reveal reveal-delay-3">
+                            <a
+                                class="btn btn-outline"
+                                href="https://github.com/ostefani/subnetlens"
+                                target="_blank"
+                                rel="noopener">
+                                <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                                    <path
+                                        d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
+                                </svg>
+                                View on GitHub
+                            </a>
+                            <a href="#install" class="btn btn-solid">Get Started</a>
+                        </div>
+                    </div>
+                </section>
+
+                <section id="demo" class="demo reveal-section">
+                    <div class="container">
+                        <div class="section-heading reveal">
+                            <h2>Demo</h2>
+                            <p>Solve your tasks with completely open source tool running locally.</p>
+                        </div>
+                        <div class="terminal-container">
+                            <div class="terminal-header">
+                                <div class="dot red"></div>
+                                <div class="dot yellow"></div>
+                                <div class="dot green"></div>
+                                <div class="terminal-title">bash</div>
+                            </div>
+                            <div class="terminal-body" id="terminal">
+                                <div class="line terminal-line">
+                                    <span class="color-dim">(.venv) username@hostname code-orbit %</span> python3
+                                    main.py --dir ~/Code/temp/ --prompt "Create button component in react that accept
+                                    onClick callback and children. use css modules" --profile gemma-e4b
+                                </div>
+
+                                <div class="rich-panel panel-settings terminal-block">
+                                    <div class="rich-panel-title">🔧 settings</div>
+                                    <div class="rich-panel-body">
+                                        <span class="color-cyan">Code Orbit</span><br />
+                                        <span class="color-dim">Target : </span
+                                        ><span class="color-green">/Users/username/Code/temp</span><br />
+                                        <span class="color-dim">Model : </span
+                                        ><span class="color-purple"
+                                            >http://localhost:8081/v1 (gemma-4-E4B-it-f16.gguf)</span
+                                        ><br />
+                                        <span class="color-dim">Prompt : </span
+                                        ><span class="color-yellow"
+                                            >Create button component in react that accept onClick callback and children.
+                                            use css modules</span
+                                        >
+                                    </div>
+                                </div>
+
+                                <div class="output terminal-block">
+                                    <span class="color-yellow">⚠️ Skipped 1 file(s) due to context limit:</span><br />
+                                    <span class="color-light">&nbsp;&nbsp;&nbsp;- package-lock.json</span><br /><br />
+                                    <span>📂 </span><span class="color-light">Context: 4 files | ~375 tokens</span
+                                    ><br /><br />
+                                    <span>💡 </span><span class="color-cyan">Summary:</span>
+                                    <span class="color-light"
+                                        >Created a reusable React button component using CSS Modules, including its
+                                        corresponding styles.</span
+                                    ><br />
+                                    <span class="color-dim">Files to change: </span><span class="color-cyan">2</span
+                                    ><br />
+                                </div>
+
+                                <div class="rich-separator sep-create terminal-block">
+                                    <span class="color-yellow">✨ CREATE: </span
+                                    ><span class="color-light">src/components/Button/Button.module.css</span>
+                                </div>
+
+                                <div class="rich-panel panel-create terminal-block">
+                                    <div class="rich-panel-title">New File Content</div>
+                                    <div class="rich-panel-body">
+                                        <div class="syntax-line">
+                                            <span class="line-num"> 1 </span><span class="color-yellow">.button</span>
+                                            <span class="color-light">{</span>
+                                        </div>
+                                        <div class="syntax-line">
+                                            <span class="line-num"> 2 </span>&nbsp;&nbsp;<span class="color-cyan"
+                                                >padding</span
+                                            ><span class="color-light">:</span>
+                                            <span class="color-purple">10px 20px</span
+                                            ><span class="color-light">;</span>
+                                        </div>
+                                        <div class="syntax-line">
+                                            <span class="line-num"> 3 </span>&nbsp;&nbsp;<span class="color-cyan"
+                                                >border</span
+                                            ><span class="color-light">:</span> <span class="color-purple">none</span
+                                            ><span class="color-light">;</span>
+                                        </div>
+                                        <div class="syntax-line">
+                                            <span class="line-num"> 4 </span>&nbsp;&nbsp;<span class="color-cyan"
+                                                >background-color</span
+                                            ><span class="color-light">:</span> <span class="color-purple">#007bff</span
+                                            ><span class="color-light">;</span>
+                                        </div>
+                                        <div class="syntax-line">
+                                            <span class="line-num"> 5 </span>&nbsp;&nbsp;<span class="color-cyan"
+                                                >color</span
+                                            ><span class="color-light">:</span> <span class="color-purple">white</span
+                                            ><span class="color-light">;</span>
+                                        </div>
+                                        <div class="syntax-line">
+                                            <span class="line-num"> 6 </span>&nbsp;&nbsp;<span class="color-cyan"
+                                                >cursor</span
+                                            ><span class="color-light">:</span> <span class="color-purple">pointer</span
+                                            ><span class="color-light">;</span>
+                                        </div>
+                                        <div class="syntax-line">
+                                            <span class="line-num"> 7 </span>&nbsp;&nbsp;<span class="color-cyan"
+                                                >font-size</span
+                                            ><span class="color-light">:</span> <span class="color-purple">16px</span
+                                            ><span class="color-light">;</span>
+                                        </div>
+                                        <div class="syntax-line">
+                                            <span class="line-num"> 8 </span>&nbsp;&nbsp;<span class="color-cyan"
+                                                >border-radius</span
+                                            ><span class="color-light">:</span> <span class="color-purple">5px</span
+                                            ><span class="color-light">;</span>
+                                        </div>
+                                        <div class="syntax-line">
+                                            <span class="line-num"> 9 </span><span class="color-light">}</span>
+                                        </div>
+                                        <div class="syntax-line"><span class="line-num">10 </span></div>
+                                        <div class="syntax-line">
+                                            <span class="line-num">11 </span
+                                            ><span class="color-yellow">.button:hover</span>
+                                            <span class="color-light">{</span>
+                                        </div>
+                                        <div class="syntax-line">
+                                            <span class="line-num">12 </span>&nbsp;&nbsp;<span class="color-cyan"
+                                                >background-color</span
+                                            ><span class="color-light">:</span> <span class="color-purple">#0056b3</span
+                                            ><span class="color-light">;</span>
+                                        </div>
+                                        <div class="syntax-line">
+                                            <span class="line-num">13 </span><span class="color-light">}</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="rich-separator sep-create terminal-block">
+                                    <span class="color-yellow">✨ CREATE: </span
+                                    ><span class="color-light">src/components/Button/Button.jsx</span>
+                                </div>
+
+                                <div class="rich-panel panel-create terminal-block">
+                                    <div class="rich-panel-title">New File Content</div>
+                                    <div class="rich-panel-body">
+                                        <div class="syntax-line">
+                                            <span class="line-num"> 1 </span><span class="color-cyan">import</span>
+                                            <span class="color-light">React</span> <span class="color-cyan">from</span>
+                                            <span class="color-yellow">'react'</span><span class="color-light">;</span>
+                                        </div>
+                                        <div class="syntax-line">
+                                            <span class="line-num"> 2 </span><span class="color-cyan">import</span>
+                                            <span class="color-light">styles</span> <span class="color-cyan">from</span>
+                                            <span class="color-yellow">'./Button.module.css'</span
+                                            ><span class="color-light">;</span>
+                                        </div>
+                                        <div class="syntax-line"><span class="line-num"> 3 </span></div>
+                                        <div class="syntax-line">
+                                            <span class="line-num"> 4 </span><span class="color-dim">/**</span>
+                                        </div>
+                                        <div class="syntax-line">
+                                            <span class="line-num"> 5 </span
+                                            ><span class="color-dim"> * A reusable button component.</span>
+                                        </div>
+                                        <div class="syntax-line">
+                                            <span class="line-num"> 6 </span
+                                            ><span class="color-dim"> * @param {object} props - Component props.</span>
+                                        </div>
+                                        <div class="syntax-line">
+                                            <span class="line-num"> 7 </span
+                                            ><span class="color-dim">
+                                                * @param {function} props.onClick - Callback function executed on
+                                                click.</span
+                                            >
+                                        </div>
+                                        <div class="syntax-line">
+                                            <span class="line-num"> 8 </span
+                                            ><span class="color-dim">
+                                                * @param {React.ReactNode} props.children - Content to display inside
+                                                the button.</span
+                                            >
+                                        </div>
+                                        <div class="syntax-line">
+                                            <span class="line-num"> 9 </span><span class="color-dim"> */</span>
+                                        </div>
+                                        <div class="syntax-line">
+                                            <span class="line-num">10 </span><span class="color-cyan">const</span>
+                                            <span class="color-light">Button = ({</span>
+                                            <span class="color-cyan">onClick</span><span class="color-light">,</span>
+                                            <span class="color-cyan">children</span>
+                                            <span class="color-light">}) =&gt; {</span>
+                                        </div>
+                                        <div class="syntax-line">
+                                            <span class="line-num">11 </span>&nbsp;&nbsp;<span class="color-cyan"
+                                                >return</span
+                                            >
+                                            <span class="color-light">(</span>
+                                        </div>
+                                        <div class="syntax-line">
+                                            <span class="line-num">12 </span>&nbsp;&nbsp;&nbsp;&nbsp;<span
+                                                class="color-light"
+                                                >&lt;</span
+                                            ><span class="color-pink">button</span>
+                                            <span class="color-green">className</span><span class="color-light">={</span
+                                            ><span class="color-yellow">styles.button</span
+                                            ><span class="color-light">}</span> <span class="color-green">onClick</span
+                                            ><span class="color-light">={</span><span class="color-yellow">onClick</span
+                                            ><span class="color-light">}&gt;</span>
+                                        </div>
+                                        <div class="syntax-line">
+                                            <span class="line-num">13 </span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span
+                                                class="color-light"
+                                                >{</span
+                                            ><span class="color-yellow">children</span
+                                            ><span class="color-light">}</span>
+                                        </div>
+                                        <div class="syntax-line">
+                                            <span class="line-num">14 </span>&nbsp;&nbsp;&nbsp;&nbsp;<span
+                                                class="color-light"
+                                                >&lt;/</span
+                                            ><span class="color-pink">button</span><span class="color-light">&gt;</span>
+                                        </div>
+                                        <div class="syntax-line">
+                                            <span class="line-num">15 </span>&nbsp;&nbsp;<span class="color-light"
+                                                >);</span
+                                            >
+                                        </div>
+                                        <div class="syntax-line">
+                                            <span class="line-num">16 </span><span class="color-light">};</span>
+                                        </div>
+                                        <div class="syntax-line"><span class="line-num">17 </span></div>
+                                        <div class="syntax-line">
+                                            <span class="line-num">18 </span><span class="color-cyan">export</span>
+                                            <span class="color-cyan">default</span>
+                                            <span class="color-light">Button;</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="output terminal-block">
+                                    <br />
+                                    <span class="color-yellow">Apply these changes?</span>
+                                    <span class="color-purple">[y/n]</span><span class="color-light">: y</span
+                                    ><br /><br />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section id="features" class="features reveal-section">
+                    <div class="container">
+                        <div class="section-heading reveal">
+                            <h2>Core Features</h2>
+                            <p>First-version content, with icon treatment aligned to the second and third versions.</p>
+                        </div>
+
+                        <div class="features-grid">
+                            <article class="feature-card reveal-card">
+                                <div class="feature-icon-wrap">
+                                    <svg
+                                        class="feature-icon"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                        viewBox="0 0 24 24"
+                                        fill="currentColor">
+                                        <path
+                                            d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5L12 2zm0 17.93c-3.45-1.13-6-4.82-6-8.83V6.3l6-2.25 6 2.25v4.81c0 3.99-2.55 7.7-6 8.82z" />
+                                    </svg>
+                                </div>
+                                <h3>Privacy First</h3>
+                                <p>
+                                    Runs entirely on your machine. Your code never leaves your local environment,
+                                    ensuring maximum security and compliance.
+                                </p>
+                            </article>
+
+                            <article class="feature-card reveal-card">
+                                <div class="feature-icon-wrap">
+                                    <svg
+                                        class="feature-icon"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                        viewBox="0 0 24 24"
+                                        fill="currentColor">
+                                        <path
+                                            d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16c2.76 0 5-2.24 5-5 0-4.42-4.03-8-9-8zm-5.5 9c-.83 0-1.5-.67-1.5-1.5S5.67 9 6.5 9 8 9.67 8 10.5 7.33 12 6.5 12zm3-4C8.67 8 8 7.33 8 6.5S8.67 5 9.5 5s1.5.67 1.5 1.5S10.33 8 9.5 8zm5 0c-.83 0-1.5-.67-1.5-1.5S13.67 5 14.5 5s1.5.67 1.5 1.5S15.33 8 14.5 8zm3 4c-.83 0-1.5-.67-1.5-1.5S16.67 9 17.5 9s1.5.67 1.5 1.5-.67 1.5-1.5 1.5z" />
+                                    </svg>
+                                </div>
+                                <h3>Rich Aesthetics</h3>
+                                <p>
+                                    Designed for developers who care about visual excellence. A premium CLI experience
+                                    with syntax highlighting and clear diffs.
+                                </p>
+                            </article>
+
+                            <article class="feature-card reveal-card">
+                                <div class="feature-icon-wrap">
+                                    <svg
+                                        class="feature-icon"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                        viewBox="0 0 24 24"
+                                        fill="currentColor">
+                                        <path
+                                            d="M12 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zM4 8c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm16 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zM4 16c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm16 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm-8-7c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z" />
+                                        <path
+                                            d="M12 5v4M6 10l4.5 1.5M17.5 10 13 11.5M5.5 16.5l5-4M18.5 16.5l-5-4"
+                                            stroke="currentColor"
+                                            stroke-width="1.5"
+                                            stroke-linecap="round"
+                                            fill="none" />
+                                    </svg>
+                                </div>
+                                <h3>Intelligent Context</h3>
+                                <p>
+                                    Advanced XML-based codebase analysis provides the AI with perfect context, resulting
+                                    in highly accurate code edits.
+                                </p>
+                            </article>
+
+                            <article class="feature-card reveal-card">
+                                <div class="feature-icon-wrap">
+                                    <svg
+                                        class="feature-icon"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                        viewBox="0 0 24 24"
+                                        fill="currentColor">
+                                        <path
+                                            d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z" />
+                                    </svg>
+                                </div>
+                                <h3>Model Profiles</h3>
+                                <p>
+                                    Seamlessly switch between different models like Qwen, DeepSeek, and Codestral with
+                                    dedicated configuration profiles.
+                                </p>
+                            </article>
+
+                            <article class="feature-card reveal-card">
+                                <div class="feature-icon-wrap">
+                                    <svg
+                                        class="feature-icon"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                        viewBox="0 0 24 24"
+                                        fill="currentColor">
+                                        <path
+                                            d="M23 12l-2.44-2.78.34-3.68-3.61-.82-1.89-3.18L12 3 8.6 1.54 6.71 4.72l-3.61.81.34 3.68L1 12l2.44 2.78-.34 3.69 3.61.82 1.89 3.18L12 21l3.4 1.46 1.89-3.18 3.61-.82-.34-3.68L23 12zm-12.91 4.72-3.8-3.81 1.48-1.48 2.32 2.33 5.85-5.87 1.48 1.48-7.33 7.35z" />
+                                    </svg>
+                                </div>
+                                <h3>Safety Drills</h3>
+                                <p>
+                                    Always see a full preview of changes before they are applied. Built-in git
+                                    integration ensures you can rollback anytime.
+                                </p>
+                            </article>
+
+                            <article class="feature-card reveal-card">
+                                <div class="feature-icon-wrap">
+                                    <svg
+                                        class="feature-icon"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                        viewBox="0 0 24 24"
+                                        fill="currentColor">
+                                        <path d="M7 2v11h3v9l7-12h-4l4-8z" />
+                                    </svg>
+                                </div>
+                                <h3>Native Speed</h3>
+                                <p>
+                                    Optimized for local execution using llama.cpp. Low latency interactions that keep
+                                    you in the flow.
+                                </p>
+                            </article>
+                        </div>
+                    </div>
+                </section>
+
+                <section id="install" class="install-section reveal-section">
+                    <div class="install-card reveal reveal-delay-1">
+                        <svg
+                            class="install-bg-icon"
+                            xmlns="http://www.w3.org/2000/svg"
+                            width="16"
+                            height="16"
+                            fill="currentColor"
+                            class="bi bi-rocket"
+                            viewBox="0 0 16 16">
+                            <path d="M8 8c.828 0 1.5-.895 1.5-2S8.828 4 8 4s-1.5.895-1.5 2S7.172 8 8 8" />
+                            <path
+                                d="M11.953 8.81c-.195-3.388-.968-5.507-1.777-6.819C9.707 1.233 9.23.751 8.857.454a3.5 3.5 0 0 0-.463-.315A2 2 0 0 0 8.25.064.55.55 0 0 0 8 0a.55.55 0 0 0-.266.073 2 2 0 0 0-.142.08 4 4 0 0 0-.459.33c-.37.308-.844.803-1.31 1.57-.805 1.322-1.577 3.433-1.774 6.756l-1.497 1.826-.004.005A2.5 2.5 0 0 0 2 12.202V15.5a.5.5 0 0 0 .9.3l1.125-1.5c.166-.222.42-.4.752-.57.214-.108.414-.192.625-.281l.198-.084c.7.428 1.55.635 2.4.635s1.7-.207 2.4-.635q.1.044.196.083c.213.09.413.174.627.282.332.17.586.348.752.57l1.125 1.5a.5.5 0 0 0 .9-.3v-3.298a2.5 2.5 0 0 0-.548-1.562zM12 10.445v.055c0 .866-.284 1.585-.75 2.14.146.064.292.13.425.199.39.197.8.46 1.1.86L13 14v-1.798a1.5 1.5 0 0 0-.327-.935zM4.75 12.64C4.284 12.085 4 11.366 4 10.5v-.054l-.673.82a1.5 1.5 0 0 0-.327.936V14l.225-.3c.3-.4.71-.664 1.1-.861.133-.068.279-.135.425-.199M8.009 1.073q.096.06.226.163c.284.226.683.621 1.09 1.28C10.137 3.836 11 6.237 11 10.5c0 .858-.374 1.48-.943 1.893C9.517 12.786 8.781 13 8 13s-1.517-.214-2.057-.607C5.373 11.979 5 11.358 5 10.5c0-4.182.86-6.586 1.677-7.928.409-.67.81-1.082 1.096-1.32q.136-.113.236-.18Z" />
+                            <path
+                                d="M9.479 14.361c-.48.093-.98.139-1.479.139s-.999-.046-1.479-.139L7.6 15.8a.5.5 0 0 0 .8 0z" />
+                        </svg>
+
+                        <div class="install-content">
+                            <h2>Ready to orbit?</h2>
+                            <p class="install-subtitle">
+                                Get the cross-platform version from GitHub and run it locally with a simple setup.
+                            </p>
+
+                            <div class="install-cmd-wrap">
+                                <pre id="install-code"><span class="comment"># Clone and install locally</span>
+                                    <span class="code-line"><span class="prompt">$</span> git clone /path-to-the-clone</span>
+
+                                    <span class="comment"># Run the agent</span>
+                                    <span class="code-line"><span class="prompt">$</span> python3 main.py --prompt "Fix it"</span>
+                                </pre>
+                                <button
+                                    class="copy-button"
+                                    type="button"
+                                    data-copy-target="install-code"
+                                    aria-label="Copy to clipboard">
+                                    <svg
+                                        xmlns="http://www.w3.org/2000/svg"
+                                        viewBox="0 0 24 24"
+                                        fill="currentColor"
+                                        width="24"
+                                        height="24"
+                                        aria-hidden="true">
+                                        <path
+                                            d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z" />
+                                    </svg>
+                                    <span style="display: none">Copy</span>
+                                </button>
+                            </div>
+
+                            <p class="install-footer">Python 3.12 or later required.</p>
+                        </div>
+                    </div>
+                </section>
+            </main>
+
+            <footer class="site-footer">
+                <div class="container footer-inner">
+                    <p>&copy; 2026 Olha Stefanishyna · MIT License.<br />Built for modern development.</p>
+                </div>
+            </footer>
+        </div>
+
+        <script>
+            const copyButton = document.querySelector('[data-copy-target="install-code"]');
+            if (copyButton) {
+                copyButton.addEventListener("click", async () => {
+                    const target = document.getElementById(copyButton.dataset.copyTarget);
+                    if (!target) return;
+
+                    // Clone and strip prompt spans before reading text
+                    const clone = target.cloneNode(true);
+                    clone.querySelectorAll(".prompt").forEach((el) => el.remove());
+
+                    const text = clone.innerText.replace(/\n{3,}/g, "\n\n").trim();
+
+                    try {
+                        await navigator.clipboard.writeText(text);
+                        copyButton.classList.add("is-copied");
+                        const label = copyButton.querySelector("span:last-child");
+                        if (label) label.textContent = "Copied";
+                        setTimeout(() => {
+                            copyButton.classList.remove("is-copied");
+                            if (label) label.textContent = "Copy";
+                        }, 1800);
+                    } catch (error) {
+                        console.error("Copy failed", error);
+                    }
+                });
+            }
+
+            const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+            if (!prefersReducedMotion) {
+                document.body.classList.add("motion-safe");
+
+                const revealItems = document.querySelectorAll(".reveal, .reveal-card, .reveal-section");
+                const revealObserver = new IntersectionObserver(
+                    (entries, observer) => {
+                        entries.forEach((entry) => {
+                            if (!entry.isIntersecting) return;
+                            entry.target.classList.add("is-visible");
+                            observer.unobserve(entry.target);
+                        });
+                    },
+                    {
+                        root: document.querySelector(".site-shell"),
+                        threshold: 0.18,
+                        rootMargin: "0px 0px -8% 0px",
+                    },
+                );
+
+                revealItems.forEach((item) => revealObserver.observe(item));
+
+                const terminal = document.getElementById("terminal");
+                if (terminal) {
+                    terminal.style.minHeight = "640px";
+                    const originalNodes = Array.from(terminal.childNodes).map((n) => n.cloneNode(true));
+                    terminal.innerHTML = "";
+
+                    let typed = false;
+
+                    async function typeNode(node, parent) {
+                        if (node.nodeType === Node.TEXT_NODE) {
+                            const text = node.textContent;
+                            if (!text.trim()) {
+                                parent.appendChild(document.createTextNode(text));
+                                return;
+                            }
+
+                            const textNode = document.createTextNode("");
+                            parent.appendChild(textNode);
+
+                            for (let i = 0; i < text.length; i++) {
+                                textNode.textContent += text[i];
+                                terminal.scrollTop = terminal.scrollHeight;
+                                if (text[i].trim() !== "") {
+                                    await new Promise((r) => setTimeout(r, 2));
+                                }
+                            }
+                        } else if (node.nodeType === Node.ELEMENT_NODE) {
+                            const clone = node.cloneNode(false);
+                            parent.appendChild(clone);
+                            for (let child of Array.from(node.childNodes)) {
+                                await typeNode(child, clone);
+                            }
+                        }
+                    }
+
+                    const startTyping = async () => {
+                        for (let node of originalNodes) {
+                            await typeNode(node, terminal);
+                        }
+                    };
+
+                    const terminalObserver = new IntersectionObserver(
+                        (entries, observer) => {
+                            if (!entries[0].isIntersecting || typed) return;
+                            typed = true;
+                            startTyping();
+                            observer.unobserve(terminal);
+                        },
+                        {
+                            root: document.querySelector(".site-shell"),
+                            threshold: 0.35,
+                        },
+                    );
+
+                    terminalObserver.observe(terminal);
+                }
+            } else {
+                document.querySelectorAll(".reveal, .reveal-card, .reveal-section").forEach((item) => {
+                    item.classList.add("is-visible");
+                });
+            }
+        </script>
+    </body>
+</html>
