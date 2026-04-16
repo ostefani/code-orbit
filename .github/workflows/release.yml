@@ -14,7 +14,7 @@ jobs:
         runs-on: ${{ matrix.os }}
         strategy:
             matrix:
-                os: [ubuntu-latest, windows-latest, macos-latest]
+                os: [ubuntu-latest, windows-latest]
                 include:
                     - os: ubuntu-latest
                       artifact_name: code-orbit-linux
