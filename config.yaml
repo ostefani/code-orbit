@@ -19,12 +19,23 @@ profiles:
         max_context_tokens: 32768
         tokenizer_backend: 'tokenizers_json'
         tokenizer_model_path: ~/.llamacpp_models/ggufs/gpt-oss-20b/tokenizer.json
+    qwen-coder:
+        model: 'qwen-coder'
+        max_context_tokens: 32768
+        tokenizer_backend: 'tokenizers_json'
+        tokenizer_model_path: ~/.llamacpp_models/ggufs/Qwen3-Coder-Instruct-30b/tokenizer.json
     gemma-e4b:
         model: 'gemma-4-E4B-it-f16.gguf'
         max_context_tokens: 32768
         max_response_tokens: 16384
         tokenizer_backend: tokenizers_json
         tokenizer_model_path: ~/.llamacpp_models/ggufs/gemma-4-E4B-it/tokenizer.json
+    gemma-4-26B:
+        model: 'gemma-4-26B'
+        max_context_tokens: 32768
+        max_response_tokens: 16384
+        tokenizer_backend: tokenizers_json
+        tokenizer_model_path: ~/.llamacpp_models/ggufs/gemma-4-26B-A4B-it/tokenizer.json
 
 # Pause and show diffs before applying changes
 interactive: true
