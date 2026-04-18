@@ -1,6 +1,7 @@
 import pytest
 from pathlib import Path
 from agent.patcher import apply_changes
+from agent.events import ApplyFilePayload, EventBus
 
 
 @pytest.fixture
@@ -41,3 +42,18 @@ def test_apply_mkdir(temp_project):
 
     assert (temp_project / "subdir" / "deep" / "file.py").exists()
     assert (temp_project / "subdir" / "deep" / "file.py").read_text() == "hello"
+
+
+def test_apply_changes_emits_events(temp_project):
+    changes = [{"path": "new.py", "action": "create", "content": "print('new')"}]
+    bus = EventBus()
+    events = []
+    bus.subscribe(events.append)
+
+    apply_changes(str(temp_project), changes, event_bus=bus)
+
+    assert len(events) == 1
+    assert events[0].name == "apply.file"
+    assert isinstance(events[0].payload, ApplyFilePayload)
+    assert events[0].payload.path == "new.py"
+    assert events[0].payload.action == "create"

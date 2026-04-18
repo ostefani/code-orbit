@@ -13,7 +13,7 @@ from .constants import (
     TEST_HINTS,
 )
 from .llm import SYSTEM_PROMPT
-from .token_counter import count_tokens_int
+from .token_counter import count_tokens
 
 
 @dataclass
@@ -28,6 +28,16 @@ class FileEntry:
 class FileCandidate:
     path: str
     size_bytes: int
+
+
+@dataclass(frozen=True)
+class ContextBuildResult:
+    entries: tuple[FileEntry, ...]
+    context: str
+    skipped_paths: tuple[str, ...]
+    used_tokens: int
+    token_budget: int
+    token_warnings: tuple[str, ...]
 
 
 def _is_ignored(path: Path, root: Path, patterns: list[str]) -> bool:
@@ -137,7 +147,7 @@ def _render_file_block(path: str, content: str) -> str:
     return f'<file path="{path}">\n{content}\n</file>\n'
 
 
-def _compute_context_budget(prompt: str, config: Config) -> int:
+def _compute_context_budget(prompt: str, config: Config) -> tuple[int, tuple[str, ...]]:
     """
     Compute how many tokens may be spent on file blocks only.
 
@@ -151,7 +161,8 @@ def _compute_context_budget(prompt: str, config: Config) -> int:
     scaffold = (
         f"{SYSTEM_PROMPT}\n" f"<codebase>\n</codebase>\n" f"<task>\n{prompt}\n</task>"
     )
-    base_overhead = count_tokens_int(scaffold, config)
+    scaffold_result = count_tokens(scaffold, config)
+    base_overhead = scaffold_result.count
 
     if config.tokenizer_backend == "estimate":
         # Estimate backend is intentionally conservative.
@@ -166,12 +177,10 @@ def _compute_context_budget(prompt: str, config: Config) -> int:
         - base_overhead
         - safety_margin
     )
-    return max(0, budget)
+    return max(0, budget), scaffold_result.warnings
 
 
-def build_context(
-    root: str, prompt: str, config: Config
-) -> tuple[list[FileEntry], str]:
+def build_context(root: str, prompt: str, config: Config) -> ContextBuildResult:
     """
     Walk the directory and collect files into context.
     Returns (file_entries, formatted_context_string).
@@ -212,10 +221,11 @@ def build_context(
         )
     )
 
-    token_budget = _compute_context_budget(prompt, config)
+    token_budget, initial_warnings = _compute_context_budget(prompt, config)
     used_tokens = 0
     included: list[FileEntry] = []
     skipped: list[str] = []
+    token_warnings: list[str] = list(initial_warnings)
 
     for candidate in candidates:
         path = root_path / candidate.path
@@ -225,7 +235,9 @@ def build_context(
             continue
 
         rendered = _render_file_block(candidate.path, content)
-        tokens = count_tokens_int(rendered, config)
+        token_result = count_tokens(rendered, config)
+        tokens = token_result.count
+        token_warnings.extend(token_result.warnings)
 
         if used_tokens + tokens > token_budget:
             skipped.append(candidate.path)
@@ -249,16 +261,15 @@ def build_context(
     parts.append("</codebase>")
 
     context_str = "\n".join(parts)
-
-    if skipped:
-        print(f"\n⚠️  Skipped {len(skipped)} file(s) due to context limit:")
-        for s in skipped[:5]:
-            print(f"   - {s}")
-        if len(skipped) > 5:
-            print(f"   ... and {len(skipped) - 5} more")
-
-    print(f"\n📂 Context: {len(included)} files | ~{used_tokens:,} file tokens")
-    return included, context_str
+    deduped_warnings = tuple(dict.fromkeys(token_warnings))
+    return ContextBuildResult(
+        entries=tuple(included),
+        context=context_str,
+        skipped_paths=tuple(skipped),
+        used_tokens=used_tokens,
+        token_budget=token_budget,
+        token_warnings=deduped_warnings,
+    )
 
 
 def get_file_tree(root: str, config: Config) -> str:

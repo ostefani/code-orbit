@@ -3,13 +3,14 @@ import difflib
 
 from pathlib import Path
 
-from rich.console import Console
-from rich.panel import Panel
-from rich.syntax import Syntax
-from rich.columns import Columns
-from rich import print as rprint
-
-console = Console()
+from .events import (
+    AgentEvent,
+    ApplyFilePayload,
+    EventBus,
+    GitCommitFailedPayload,
+    GitCommitSucceededPayload,
+    PreviewChangePayload,
+)
 
 
 def _safe_path(root: Path, rel_path: str) -> Path:
@@ -20,8 +21,11 @@ def _safe_path(root: Path, rel_path: str) -> Path:
     return resolved
 
 
-def preview_changes(root: str, changes: list[dict]) -> None:
-    """Print a colored diff or syntax-highlighted code for each change."""
+def preview_changes(root: str, changes: list[dict], event_bus: EventBus | None = None) -> None:
+    """Emit preview events for each change."""
+    if event_bus is None:
+        return
+
     root_path = Path(root).resolve()
 
     for change in changes:
@@ -29,42 +33,46 @@ def preview_changes(root: str, changes: list[dict]) -> None:
         action = change["action"]
         new_content = change.get("content", "")
 
-        action_label = {
-            "update": "[bold yellow]✏️  UPDATE[/bold yellow]",
-            "create": "[bold green]✨ CREATE[/bold green]",
-            "delete": "[bold red]🗑️  DELETE[/bold red]",
-        }.get(action, f"[bold]{action.upper()}[/bold]")
-
-        rprint(
-            f"\n[bold blue]─[/bold blue][bold]{action_label}: {change['path']} [/bold][bold blue]{'─' * (console.width - len(change['path']) - 20)}[/bold blue]"
-        )
-
         if action == "delete":
-            if path.exists():
-                rprint(f"  [dim]File will be deleted.[/dim]")
+            if event_bus:
+                event_bus.publish(AgentEvent(
+                    name="preview.change",
+                    state="previewing",
+                    payload=PreviewChangePayload(
+                        path=change["path"],
+                        action=action,
+                        exists=path.exists(),
+                    ),
+                ))
             continue
 
         if action == "create":
-            syntax = Syntax(
-                new_content,
-                Path(change["path"]).suffix[1:] or "text",
-                theme="monokai",
-                line_numbers=True,
-            )
-            rprint(
-                Panel(
-                    syntax,
-                    title="[green]New File Content[/green]",
-                    border_style="green",
-                )
-            )
+            if event_bus:
+                event_bus.publish(AgentEvent(
+                    name="preview.change",
+                    state="previewing",
+                    payload=PreviewChangePayload(
+                        path=change["path"],
+                        action=action,
+                        content=new_content,
+                    ),
+                ))
             continue
 
         # update
         if path.exists():
             old_content = path.read_text(encoding="utf-8")
             if old_content == new_content:
-                rprint("  [dim](no changes detected)[/dim]")
+                if event_bus:
+                    event_bus.publish(AgentEvent(
+                        name="preview.change",
+                        state="previewing",
+                        payload=PreviewChangePayload(
+                            path=change["path"],
+                            action=action,
+                            unchanged=True,
+                        ),
+                    ))
                 continue
 
             old_lines = old_content.splitlines(keepends=True)
@@ -90,33 +98,33 @@ def preview_changes(root: str, changes: list[dict]) -> None:
                 else:
                     diff_text += f"{line}\n"
 
-            rprint(
-                Panel(
-                    diff_text.strip(),
-                    title="[yellow]Diff Preview[/yellow]",
-                    border_style="yellow",
-                )
-            )
+            if event_bus:
+                event_bus.publish(AgentEvent(
+                    name="preview.change",
+                    state="previewing",
+                    payload=PreviewChangePayload(
+                        path=change["path"],
+                        action=action,
+                        diff_text=diff_text.strip(),
+                    ),
+                ))
         else:
-            rprint(
-                f"  [bold yellow]⚠️  File not found locally, will create:[/bold yellow] {change['path']}"
-            )
-            syntax = Syntax(
-                new_content,
-                Path(change["path"]).suffix[1:] or "text",
-                theme="monokai",
-                line_numbers=True,
-            )
-            rprint(
-                Panel(
-                    syntax,
-                    title="[green]New File Content[/green]",
-                    border_style="green",
-                )
-            )
+            if event_bus:
+                event_bus.publish(AgentEvent(
+                    name="preview.change",
+                    state="previewing",
+                    payload=PreviewChangePayload(
+                        path=change["path"],
+                        action=action,
+                        content=new_content,
+                        missing=True,
+                    ),
+                ))
 
 
-def apply_changes(root: str, changes: list[dict]) -> list[str]:
+def apply_changes(
+    root: str, changes: list[dict], event_bus: EventBus | None = None
+) -> list[str]:
     """
     Apply all changes to disk. Returns list of affected file paths.
     """
@@ -130,25 +138,43 @@ def apply_changes(root: str, changes: list[dict]) -> list[str]:
         if action == "delete":
             if path.exists():
                 path.unlink()
-                rprint(f"  [red]🗑️  Deleted:[/red] {change['path']}")
+                performed = True
             else:
-                rprint(
-                    f"  [yellow]⚠️  Delete skipped (not found):[/yellow] {change['path']}"
-                )
+                performed = False
+            if event_bus:
+                event_bus.publish(AgentEvent(
+                    name="apply.file",
+                    state="applying",
+                    payload=ApplyFilePayload(
+                        path=change["path"],
+                        action=action,
+                        performed=performed,
+                    ),
+                ))
 
         elif action in ("create", "update"):
             content = change.get("content", "")
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content, encoding="utf-8")
-            verb = "Created" if action == "create" else "Updated"
-            rprint(f"  [green]✅ {verb}:[/green] {change['path']}")
+            if event_bus:
+                event_bus.publish(AgentEvent(
+                    name="apply.file",
+                    state="applying",
+                    payload=ApplyFilePayload(
+                        path=change["path"],
+                        action=action,
+                        performed=True,
+                    ),
+                ))
 
         affected.append(str(path))
 
     return affected
 
 
-def git_commit(root: str, message: str, files: list[str]) -> None:
+def git_commit(
+    root: str, message: str, files: list[str], event_bus: EventBus | None = None
+) -> None:
     """Stage affected files and commit."""
     try:
         subprocess.run(
@@ -160,8 +186,22 @@ def git_commit(root: str, message: str, files: list[str]) -> None:
             check=True,
             capture_output=True,
         )
-        rprint(f"\n[bold blue]📦 Committed:[/bold blue] {message}")
+        if event_bus:
+            event_bus.publish(AgentEvent(
+                name="git.commit_succeeded",
+                state="committing",
+                message="Git commit created.",
+                payload=GitCommitSucceededPayload(
+                    files=tuple(files),
+                    summary=message,
+                ),
+            ))
     except subprocess.CalledProcessError as e:
-        rprint(
-            f"\n[bold yellow]⚠️  Git commit failed:[/bold yellow] {e.stderr.decode()}"
-        )
+        if event_bus:
+            event_bus.publish(AgentEvent(
+                name="git.commit_failed",
+                level="warning",
+                state="committing",
+                message="Git commit failed.",
+                payload=GitCommitFailedPayload(stderr=e.stderr.decode()),
+            ))

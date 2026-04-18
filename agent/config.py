@@ -4,6 +4,18 @@ from typing import Optional
 import yaml
 
 
+@dataclass(frozen=True)
+class ConfigLoadMessage:
+    level: str
+    text: str
+
+
+@dataclass(frozen=True)
+class ConfigLoadResult:
+    config: "Config"
+    messages: tuple[ConfigLoadMessage, ...] = ()
+
+
 @dataclass
 class Config:
     # llama.cpp server
@@ -60,7 +72,14 @@ class Config:
     def load(
         cls, path: str | Path = "config.yaml", profile_name: Optional[str] = None
     ) -> "Config":
+        return cls.load_with_diagnostics(path, profile_name).config
+
+    @classmethod
+    def load_with_diagnostics(
+        cls, path: str | Path = "config.yaml", profile_name: Optional[str] = None
+    ) -> ConfigLoadResult:
         config_path = Path(path).expanduser().resolve()
+        messages: list[ConfigLoadMessage] = []
 
         data: dict = {}
         if config_path.exists():
@@ -80,12 +99,22 @@ class Config:
         if selected_profile_name:
             if selected_profile_name in profiles:
                 profile_data = profiles[selected_profile_name]
-                print(f"✅ Using profile '{selected_profile_name}'")
+                messages.append(
+                    ConfigLoadMessage(
+                        level="info",
+                        text=f"Using profile '{selected_profile_name}'",
+                    )
+                )
             else:
                 available = ", ".join(profiles.keys()) or "none"
-                print(
-                    f"⚠️  Profile '{selected_profile_name}' not found "
-                    f"(available: {available}). Using base config."
+                messages.append(
+                    ConfigLoadMessage(
+                        level="warning",
+                        text=(
+                            f"Profile '{selected_profile_name}' not found "
+                            f"(available: {available}). Using base config."
+                        ),
+                    )
                 )
 
         merged = {**base_params, **profile_data}
@@ -100,4 +129,7 @@ class Config:
             merged["tokenizer_model_path"] = p
 
         valid_params = {k: v for k, v in merged.items() if k in valid_keys}
-        return cls(**valid_params)
+        return ConfigLoadResult(
+            config=cls(**valid_params),
+            messages=tuple(messages),
+        )
