@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Generic, TypeVar, Callable
 
 
-PayloadT = TypeVar("PayloadT")
+PayloadT = TypeVar("PayloadT", covariant=True)
 
 
 @dataclass(frozen=True)
@@ -136,7 +136,11 @@ class JsonEventFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         event = getattr(record, "event", None)
         if isinstance(event, AgentEvent):
-            payload = asdict(event.payload) if is_dataclass(event.payload) else event.payload
+            payload_obj = event.payload
+            if is_dataclass(payload_obj) and not isinstance(payload_obj, type):
+                payload = asdict(payload_obj)
+            else:
+                payload = payload_obj
             body = {
                 "timestamp": event.timestamp,
                 "level": event.level,
