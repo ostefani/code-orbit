@@ -36,3 +36,5 @@ config.yaml.local
 .vscode/
 .idea/
 .DS_Store
+
+INNER_DOC/
