@@ -9,12 +9,15 @@ Usage:
 
 import argparse
 import json
+import asyncio
 import sys
 from pathlib import Path
 
 from rich.console import Console
+from rich.live import Live
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
+from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich import print as rprint
 
 from agent.config import Config
@@ -190,7 +193,7 @@ def validate_llm_result(
     return result.summary, validated_changes
 
 
-def main() -> None:
+async def main() -> None:
     event_bus = EventBus()
     event_bus.subscribe(LoggingEventSubscriber(build_event_logger()))
     event_bus.subscribe(CliEventRenderer(console))
@@ -317,8 +320,30 @@ def main() -> None:
         payload=StateChangedPayload(),
     ))
     try:
-        with console.status("[bold magenta]Model is thinking..."):
-            result = call_llm(prompt, context_result.context, config)
+        progress = Progress(
+            SpinnerColumn(style="bold magenta"),
+            TextColumn("{task.description}"),
+            transient=True,
+            console=console,
+        )
+        task_id = progress.add_task("Model is streaming response...", total=None)
+        chunk_count = 0
+
+        def on_chunk(_chunk: str) -> None:
+            nonlocal chunk_count
+            chunk_count += 1
+            progress.update(
+                task_id,
+                description=f"Model is streaming response... ({chunk_count} chunks)",
+            )
+
+        with Live(progress, console=console, refresh_per_second=12):
+            result = await call_llm(
+                prompt,
+                context_result.context,
+                config,
+                on_chunk=on_chunk,
+            )
     except Exception as e:
         event_bus.publish(AgentEvent(
             name="run.failed",
@@ -416,4 +441,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        rprint("\n[bold red]Stopping...[/bold red]")
+        sys.exit(0)
