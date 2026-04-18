@@ -2,6 +2,8 @@ import json
 import logging
 from contextlib import redirect_stderr
 from io import StringIO
+from pathlib import Path
+from logging.handlers import RotatingFileHandler
 
 from agent.events import (
     AgentEvent,
@@ -11,6 +13,7 @@ from agent.events import (
     JsonEventFormatter,
     LoggingEventSubscriber,
     RunStartedPayload,
+    build_event_logger,
 )
 
 
@@ -136,3 +139,32 @@ def test_event_bus_deep_copies_typed_payload() -> None:
 
     assert published.payload == payload
     assert published.payload is not payload
+
+
+def test_build_event_logger_uses_rotating_file_handler(tmp_path: Path) -> None:
+    logger = logging.getLogger("code_orbit.events")
+    prior_handlers = logger.handlers[:]
+    logger.handlers.clear()
+
+    try:
+        current_dir = Path.cwd()
+        try:
+            import os
+
+            os.chdir(tmp_path)
+            configured = build_event_logger()
+        finally:
+            os.chdir(current_dir)
+
+        assert configured is logger
+        assert len(logger.handlers) == 1
+        handler = logger.handlers[0]
+        assert isinstance(handler, RotatingFileHandler)
+        assert handler.maxBytes == 5 * 1024 * 1024
+        assert handler.backupCount == 3
+        assert (tmp_path / ".code-orbit" / "trace.jsonl").parent.exists()
+    finally:
+        for handler in logger.handlers:
+            handler.close()
+        logger.handlers.clear()
+        logger.handlers.extend(prior_handlers)

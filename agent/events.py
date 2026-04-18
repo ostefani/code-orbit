@@ -6,6 +6,8 @@ import logging
 import sys
 from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime, timezone
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from typing import Generic, TypeVar, Callable
 
 
@@ -164,7 +166,15 @@ def build_event_logger() -> logging.Logger:
     if not any(
         getattr(handler, "_code_orbit_events", False) for handler in logger.handlers
     ):
-        handler = logging.StreamHandler()
+        log_dir = Path(".code-orbit")
+        log_dir.mkdir(exist_ok=True)
+
+        handler = RotatingFileHandler(
+            log_dir / "trace.jsonl",
+            maxBytes=5 * 1024 * 1024,
+            backupCount=3,
+            encoding="utf-8",
+        )
         handler._code_orbit_events = True  # type: ignore[attr-defined]
         handler.setFormatter(JsonEventFormatter())
         logger.addHandler(handler)
