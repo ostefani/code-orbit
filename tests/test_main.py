@@ -1,6 +1,6 @@
 from agent.config import Config
 from agent.events import AgentEvent, EventBus, RunProposalReadyPayload
-from agent.llm import ChangeSchema, LLMResponseSchema
+from agent.llm import ChangeSchema, LLMResponseSchema, PlanSchema, PlanTaskSchema
 from main import validate_llm_result
 
 
@@ -91,3 +91,36 @@ def test_change_schema_rejects_content_for_delete() -> None:
         assert "must not include 'content'" in str(exc)
     else:
         raise AssertionError("Expected content to be rejected for delete actions")
+
+
+def test_plan_task_schema_requires_relative_files() -> None:
+    try:
+        PlanTaskSchema(
+            files=["/tmp/escape.py"],
+            goal="Update the application wiring",
+            reasoning="Absolute paths should never be allowed in plans.",
+        )
+    except Exception as exc:
+        assert "relative path" in str(exc)
+    else:
+        raise AssertionError("Expected absolute paths to be rejected")
+
+
+def test_plan_schema_accepts_multiple_tasks() -> None:
+    plan = PlanSchema(
+        summary="Split the feature into a plan and execution step",
+        tasks=[
+            PlanTaskSchema(
+                files=["src/app.py"],
+                goal="Update the CLI entry point",
+                reasoning="The state machine starts in the CLI layer.",
+            ),
+            PlanTaskSchema(
+                files=["agent/llm.py"],
+                goal="Add the architect and coder schemas",
+                reasoning="The LLM contract needs to be split before execution.",
+            ),
+        ],
+    )
+
+    assert plan.tasks[0].files == ["src/app.py"]

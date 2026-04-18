@@ -60,6 +60,13 @@ class RunSummaryPayload:
 
 
 @dataclass(frozen=True)
+class PlanReadyPayload:
+    summary: str
+    task_count: int
+    draft_path: str
+
+
+@dataclass(frozen=True)
 class RunProposalReadyPayload:
     summary: str
     change_count: int

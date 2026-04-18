@@ -23,8 +23,13 @@ your prompt
 build context          ← walks your directory, respects .gitignore-style patterns
     │                    fits files within your model's context window
     ▼
-call LLM provider    ← OpenAI-compatible REST API (llama.cpp, Ollama, etc.)
-    │                    model returns JSON: { summary, changes[] }
+architect plan        ← high-level JSON plan with files, goals, and reasoning
+    │
+    ▼
+review / edit plan     ← user can edit .code-orbit/plan.json before approval
+    │
+    ▼
+coder response        ← exact file replacements from the approved plan
     ▼
 preview diff           ← colored unified diff per file
     │
@@ -201,7 +206,7 @@ code-orbit/
 - [ ] Embeddings-based retrieval (RAG) for semantic file selection
 - [ ] Retry on invalid model output with stricter JSON recovery
 - [ ] File watch mode for optional automatic re-run on code changes
-- [ ] Two-pass planning and execution workflow
+- [x] Two-pass planning and execution workflow
 - [ ] `.agentignore` support for project-specific exclusions
 - [ ] Web UI with browser-based workflow
 

@@ -17,6 +17,7 @@ from .events import (
     GitCommitFailedPayload,
     GitCommitSucceededPayload,
     PreviewChangePayload,
+    PlanReadyPayload,
     RunCompletedPayload,
     RunProposalReadyPayload,
 )
@@ -68,6 +69,12 @@ class CliEventRenderer:
         ):
             rprint(f"\n[bold cyan]💡 Summary:[/bold cyan] {event.payload.summary}")
             rprint(f"[dim]Files to change:[/dim] {event.payload.change_count}")
+            return
+
+        if event.name == "plan.ready" and isinstance(event.payload, PlanReadyPayload):
+            rprint(f"\n[bold cyan]🧭 Plan:[/bold cyan] {event.payload.summary}")
+            rprint(f"[dim]Tasks:[/dim] {event.payload.task_count}")
+            rprint(f"[dim]Draft:[/dim] {event.payload.draft_path}")
             return
 
         if event.name == "run.no_changes":
