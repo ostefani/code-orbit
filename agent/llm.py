@@ -1,16 +1,51 @@
 from collections.abc import Callable
+from pathlib import Path
 from typing import Literal
 
 from openai import AsyncOpenAI
-from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
+
 from .config import Config
 
-SYSTEM_PROMPT = """\
-You are an expert software engineer and coding assistant.
-You will be given a codebase and a task. Your job is to make precise, minimal changes to fulfill the task.
+ARCHITECT_SYSTEM_PROMPT = """\
+You are The Architect, a senior software planner.
+You will be given a codebase and a user request. Your job is to produce a
+high-level implementation plan only.
 
 RULES:
-1. Return ONLY a valid JSON object — no markdown, no explanation, no backticks.
+1. Return ONLY a valid JSON object - no markdown, no explanation, no backticks.
+2. The JSON must follow this exact schema:
+   {
+     "summary": "One sentence describing the overall plan.",
+     "tasks": [
+       {
+         "files": ["relative/path/to/file.py"],
+         "goal": "What should happen in these files.",
+         "reasoning": "Why this task is needed."
+       }
+     ]
+   }
+3. Do not write raw code, diffs, or full file contents.
+4. Keep tasks high-level and implementation-oriented.
+5. Only reference repository-relative file paths.
+6. Include only tasks that materially contribute to the requested change.
+7. If no code change is needed, return an empty tasks list with a clear summary.
+"""
+
+CODER_SYSTEM_PROMPT = """\
+You are The Coder, a precise code editor.
+You will be given a codebase and an approved implementation plan. Your job is to
+produce exact file replacements only.
+
+RULES:
+1. Return ONLY a valid JSON object - no markdown, no explanation, no backticks.
 2. The JSON must follow this exact schema:
    {
      "summary": "One sentence describing what you did.",
@@ -22,20 +57,72 @@ RULES:
        }
      ]
    }
-3. For "update" and "create", always provide the COMPLETE file content — not a diff.
+3. For "update" and "create", always provide the COMPLETE file content - not a diff.
 4. Only include files that actually need to change.
 5. Preserve existing code style, indentation, and conventions.
-6. Do not hallucinate file paths — only reference files that exist in the codebase (except for "create").
+6. Do not hallucinate file paths - only reference files that exist in the codebase
+   (except for "create").
+7. Follow the approved plan exactly. If the plan says no changes are needed,
+   return an empty changes list.
 """
 
+# Backward compatibility for the context builder and any older callers.
+SYSTEM_PROMPT = ARCHITECT_SYSTEM_PROMPT
 
-class ChangeSchema(BaseModel):
+
+def _validate_repo_relative_path(path: str, label: str) -> str:
+    normalized = path.strip()
+    if not normalized:
+        raise ValueError(f"{label} must not be empty.")
+    if Path(normalized).is_absolute():
+        raise ValueError(f"{label} must be a relative path, got {path!r}.")
+    if any(part == ".." for part in Path(normalized).parts):
+        raise ValueError(
+            f"{label} must not contain parent-directory traversal: {path!r}."
+        )
+    return normalized
+
+
+class PlanTaskSchema(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    files: list[str] = Field(min_length=1)
+    goal: str = Field(min_length=1)
+    reasoning: str = Field(min_length=1)
+
+    @field_validator("files")
+    @classmethod
+    def validate_files(cls, files: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for index, file_path in enumerate(files, 1):
+            cleaned = _validate_repo_relative_path(
+                file_path, f"Plan task file #{index}"
+            )
+            if cleaned in seen:
+                raise ValueError(f"Duplicate file path in plan task: {cleaned!r}")
+            seen.add(cleaned)
+            normalized.append(cleaned)
+        return normalized
+
+
+class PlanSchema(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    summary: str = Field(min_length=1)
+    tasks: list[PlanTaskSchema] = Field(default_factory=list)
+
+
+class CodeChangeSchema(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     path: str = Field(min_length=1)
     action: Literal["create", "update", "delete"]
     content: str | None = None
 
     @model_validator(mode="after")
-    def validate_content_for_action(self) -> "ChangeSchema":
+    def validate_content_for_action(self) -> "CodeChangeSchema":
+        self.path = _validate_repo_relative_path(self.path, "Change path")
         if self.action in {"create", "update"} and self.content is None:
             raise ValueError(
                 f"Action {self.action!r} requires field 'content' to be provided."
@@ -45,36 +132,39 @@ class ChangeSchema(BaseModel):
         return self
 
 
-class LLMResponseSchema(BaseModel):
+class CodeResponseSchema(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     summary: str = Field(min_length=1)
-    changes: list[ChangeSchema] = Field(default_factory=list)
+    changes: list[CodeChangeSchema] = Field(default_factory=list)
 
 
-async def call_llm(
-    prompt: str,
-    context: str,
+ChangeSchema = CodeChangeSchema
+LLMResponseSchema = CodeResponseSchema
+
+
+async def _call_structured_llm(
+    *,
+    system_prompt: str,
+    user_message: str,
     config: Config,
+    parser: Callable[[str], BaseModel],
     on_chunk: Callable[[str], None] | None = None,
-) -> LLMResponseSchema:
-    """
-    Send prompt + codebase context to llama.cpp and return parsed JSON response.
-    """
+) -> BaseModel:
     client = AsyncOpenAI(
         base_url=config.api_base,
         api_key=config.api_key,
         timeout=60.0,
     )
 
-    user_message = f"{context}\n\n<task>\n{prompt}\n</task>"
-
     stream = await client.chat.completions.create(
         model=config.model,
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
         ],
         max_tokens=config.max_response_tokens,
-        temperature=0.2,  # Low temp for deterministic code edits
+        temperature=0.2,
         response_format={"type": "json_object"},
         stream=True,
     )
@@ -92,6 +182,56 @@ async def call_llm(
         raise ValueError("Model returned empty content.")
 
     try:
-        return LLMResponseSchema.model_validate_json(content)
+        return parser(content)
     except ValidationError as exc:
         raise ValueError(f"Invalid structured response from model: {exc}") from exc
+
+
+async def call_architect(
+    prompt: str,
+    context: str,
+    config: Config,
+    on_chunk: Callable[[str], None] | None = None,
+) -> PlanSchema:
+    """Ask the architect model for a high-level implementation plan."""
+    user_message = f"{context}\n\n<task>\n{prompt}\n</task>"
+    result = await _call_structured_llm(
+        system_prompt=ARCHITECT_SYSTEM_PROMPT,
+        user_message=user_message,
+        config=config,
+        parser=PlanSchema.model_validate_json,
+        on_chunk=on_chunk,
+    )
+    return result
+
+
+async def call_coder(
+    plan: PlanSchema,
+    context: str,
+    config: Config,
+    on_chunk: Callable[[str], None] | None = None,
+) -> CodeResponseSchema:
+    """Ask the coder model for exact file replacements from an approved plan."""
+    user_message = (
+        f"{context}\n\n<approved_plan>\n{plan.model_dump_json(indent=2)}\n</approved_plan>"
+    )
+    result = await _call_structured_llm(
+        system_prompt=CODER_SYSTEM_PROMPT,
+        user_message=user_message,
+        config=config,
+        parser=CodeResponseSchema.model_validate_json,
+        on_chunk=on_chunk,
+    )
+    return result
+
+
+async def call_llm(
+    prompt: str,
+    context: str,
+    config: Config,
+    on_chunk: Callable[[str], None] | None = None,
+) -> CodeResponseSchema:
+    """Backward-compatible alias kept for callers that still use the old API."""
+    raise NotImplementedError(
+        "call_llm() has been replaced by call_architect() and call_coder()."
+    )
