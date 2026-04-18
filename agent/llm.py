@@ -1,5 +1,6 @@
-import json
-import re
+from typing import Literal
+
+from pydantic import BaseModel, Field, ValidationError, model_validator
 from openai import OpenAI
 from .config import Config
 
@@ -27,17 +28,28 @@ RULES:
 """
 
 
-def extract_json(raw: str) -> dict:
-    match = re.search(r"\{.*\}", raw, re.DOTALL)
-    if not match:
-        raise ValueError(f"No JSON object found in output:\n{raw}")
-    try:
-        return json.loads(match.group(0))
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Invalid JSON from model: {e}\nRaw output:\n{raw}") from e
+class ChangeSchema(BaseModel):
+    path: str = Field(min_length=1)
+    action: Literal["create", "update", "delete"]
+    content: str | None = None
+
+    @model_validator(mode="after")
+    def validate_content_for_action(self) -> "ChangeSchema":
+        if self.action in {"create", "update"} and self.content is None:
+            raise ValueError(
+                f"Action {self.action!r} requires field 'content' to be provided."
+            )
+        if self.action == "delete" and self.content is not None:
+            raise ValueError("Delete actions must not include 'content'.")
+        return self
 
 
-def call_llm(prompt: str, context: str, config: Config) -> dict:
+class LLMResponseSchema(BaseModel):
+    summary: str = Field(min_length=1)
+    changes: list[ChangeSchema] = Field(default_factory=list)
+
+
+def call_llm(prompt: str, context: str, config: Config) -> LLMResponseSchema:
     """
     Send prompt + codebase context to llama.cpp and return parsed JSON response.
     """
@@ -56,6 +68,7 @@ def call_llm(prompt: str, context: str, config: Config) -> dict:
         ],
         max_tokens=config.max_response_tokens,
         temperature=0.2,  # Low temp for deterministic code edits
+        response_format={"type": "json_object"},
     )
 
     # raw = response.choices[0].message.content.strip()
@@ -71,14 +84,7 @@ def call_llm(prompt: str, context: str, config: Config) -> dict:
             f"Expected string content, got {type(content).__name__}: {content!r}"
         )
 
-    raw = content.strip()
-
-    # Strip markdown fences if model ignores instructions
-    if raw.startswith("```"):
-        lines = raw.split("\n")
-        raw = "\n".join(lines[1:-1] if lines[-1] == "```" else lines[1:])
-
     try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        return extract_json(raw)
+        return LLMResponseSchema.model_validate_json(content)
+    except ValidationError as exc:
+        raise ValueError(f"Invalid structured response from model: {exc}") from exc

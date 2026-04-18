@@ -60,6 +60,12 @@ class RunSummaryPayload:
 
 
 @dataclass(frozen=True)
+class RunProposalReadyPayload:
+    summary: str
+    change_count: int
+
+
+@dataclass(frozen=True)
 class RunCompletedPayload:
     affected_count: int
 
@@ -130,6 +136,10 @@ class EventBus:
             except Exception as exc:
                 print(f"Subscriber error: {exc}", file=sys.stderr)
         return safe_event
+
+    def emit(self, name: str, payload: PayloadT, **kwargs) -> AgentEvent[PayloadT]:
+        event = AgentEvent(name=name, payload=payload, **kwargs)
+        return self.publish(event)
 
 
 class JsonEventFormatter(logging.Formatter):

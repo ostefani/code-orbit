@@ -11,7 +11,6 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any
 
 from rich.console import Console
 from rich.panel import Panel
@@ -20,6 +19,7 @@ from rich import print as rprint
 
 from agent.config import Config
 from agent.context import build_context, get_file_tree
+from agent.llm import LLMResponseSchema, call_llm
 from agent.events import (
     AgentEvent,
     ConfigMessagePayload,
@@ -31,11 +31,10 @@ from agent.events import (
     LoggingEventSubscriber,
     RunCompletedPayload,
     RunStartedPayload,
-    RunSummaryPayload,
+    RunProposalReadyPayload,
     StateChangedPayload,
     build_event_logger,
 )
-from agent.llm import call_llm
 from agent.patcher import apply_changes, git_commit, preview_changes
 from agent.rendering import CliEventRenderer
 
@@ -138,29 +137,17 @@ def get_prompt_interactively(history: list[str]) -> str:
     )
 
 
-def validate_llm_result(result: Any, config: Config) -> tuple[str, list[dict[str, str]]]:
-    if not isinstance(result, dict):
-        raise ValueError("Model response must be a JSON object.")
-
-    summary = result.get("summary", "No summary provided.")
-    if not isinstance(summary, str):
-        raise ValueError("Model response field 'summary' must be a string.")
-
-    raw_changes = result.get("changes", [])
-    if not isinstance(raw_changes, list):
-        raise ValueError("Model response field 'changes' must be a list.")
-
+def validate_llm_result(
+    result: LLMResponseSchema, config: Config
+) -> tuple[str, list[dict[str, str]]]:
     validated_changes: list[dict[str, str]] = []
     seen_paths: set[str] = set()
 
-    for index, change in enumerate(raw_changes, 1):
-        if not isinstance(change, dict):
-            raise ValueError(f"Change #{index} must be an object.")
+    for index, change in enumerate(result.changes, 1):
+        path = change.path
+        action = change.action
 
-        path = change.get("path")
-        action = change.get("action")
-
-        if not isinstance(path, str) or not path.strip():
+        if not path.strip():
             raise ValueError(f"Change #{index} is missing a valid 'path' string.")
         if Path(path).is_absolute():
             raise ValueError(f"Change #{index} uses an absolute path: {path!r}")
@@ -190,12 +177,8 @@ def validate_llm_result(result: Any, config: Config) -> tuple[str, list[dict[str
             validated_changes.append({"path": normalized_path, "action": action})
             continue
 
-        content = change.get("content")
-        if not isinstance(content, str):
-            raise ValueError(
-                f"Change #{index} action {action!r} requires string field 'content'."
-            )
-
+        content = change.content
+        assert content is not None
         validated_changes.append(
             {
                 "path": normalized_path,
@@ -204,7 +187,7 @@ def validate_llm_result(result: Any, config: Config) -> tuple[str, list[dict[str
             }
         )
 
-    return summary, validated_changes
+    return result.summary, validated_changes
 
 
 def main() -> None:
@@ -360,11 +343,12 @@ def main() -> None:
         console.print(f"\n[bold red]Invalid model response:[/bold red] {e}")
         sys.exit(1)
 
-    event_bus.publish(AgentEvent(
-        name="run.summary",
-        state="validating",
-        payload=RunSummaryPayload(summary=summary, change_count=len(changes)),
-    ))
+    event_bus.emit(
+        "run.proposal_ready",
+        RunProposalReadyPayload(summary=summary, change_count=len(changes)),
+        state="validated",
+        message="Model response validated.",
+    )
 
     if not changes:
         event_bus.publish(AgentEvent(

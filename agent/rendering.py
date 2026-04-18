@@ -18,7 +18,7 @@ from .events import (
     GitCommitSucceededPayload,
     PreviewChangePayload,
     RunCompletedPayload,
-    RunSummaryPayload,
+    RunProposalReadyPayload,
 )
 
 
@@ -63,7 +63,9 @@ class CliEventRenderer:
                 self.console.print(f"  ... and {skipped_count - 5} more")
             return
 
-        if event.name == "run.summary" and isinstance(event.payload, RunSummaryPayload):
+        if event.name == "run.proposal_ready" and isinstance(
+            event.payload, RunProposalReadyPayload
+        ):
             rprint(f"\n[bold cyan]💡 Summary:[/bold cyan] {event.payload.summary}")
             rprint(f"[dim]Files to change:[/dim] {event.payload.change_count}")
             return
