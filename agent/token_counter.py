@@ -41,19 +41,7 @@ from .config import Config
 class TokenCountResult:
     count: int
     tokenizer_name: str
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Warn-once helper
-# ─────────────────────────────────────────────────────────────────────────────
-
-_warned: set[str] = set()
-
-
-def _warn_once(msg: str) -> None:
-    if msg not in _warned:
-        print(f"⚠️  {msg}")
-        _warned.add(msg)
+    warnings: tuple[str, ...] = ()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -135,25 +123,38 @@ def count_tokens(text: str, config: Config) -> TokenCountResult:
         model_path: str | None = config.tokenizer_model_path
 
         if not model_path:
-            _warn_once(
-                "tokenizer_backend='tokenizers_json' requires tokenizer_model_path "
-                "in config.  Falling back to estimate."
+            estimate = _estimate(text)
+            return TokenCountResult(
+                count=estimate.count,
+                tokenizer_name=estimate.tokenizer_name,
+                warnings=(
+                    "tokenizer_backend='tokenizers_json' requires "
+                    "tokenizer_model_path in config. Falling back to estimate.",
+                ),
             )
-            return _estimate(text)
 
         resolved = Path(model_path).expanduser().resolve()
         if not resolved.exists():
-            _warn_once(
-                f"tokenizer.json not found at '{resolved}'. "
-                "Falling back to estimate."
+            estimate = _estimate(text)
+            return TokenCountResult(
+                count=estimate.count,
+                tokenizer_name=estimate.tokenizer_name,
+                warnings=(
+                    f"tokenizer.json not found at '{resolved}'. Falling back to estimate.",
+                ),
             )
-            return _estimate(text)
 
         try:
             return _count_tokenizers_json(text, str(resolved))
         except Exception as exc:
-            _warn_once(f"tokenizers_json counting failed: {exc}. Falling back to estimate.")
-            return _estimate(text)
+            estimate = _estimate(text)
+            return TokenCountResult(
+                count=estimate.count,
+                tokenizer_name=estimate.tokenizer_name,
+                warnings=(
+                    f"tokenizers_json counting failed: {exc}. Falling back to estimate.",
+                ),
+            )
 
     # ── tiktoken (OpenAI-family) ──────────────────────────────────────────────
     if backend == "tiktoken":
@@ -161,11 +162,15 @@ def count_tokens(text: str, config: Config) -> TokenCountResult:
         try:
             return _count_tiktoken(text, model_name)
         except Exception as exc:
-            _warn_once(
-                f"tiktoken counting failed for {model_name!r}: {exc}. "
-                "Falling back to estimate."
+            estimate = _estimate(text)
+            return TokenCountResult(
+                count=estimate.count,
+                tokenizer_name=estimate.tokenizer_name,
+                warnings=(
+                    f"tiktoken counting failed for {model_name!r}: {exc}. "
+                    "Falling back to estimate.",
+                ),
             )
-            return _estimate(text)
 
     # ── estimate (default / explicit) ─────────────────────────────────────────
     return _estimate(text)

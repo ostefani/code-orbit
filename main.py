@@ -20,8 +20,24 @@ from rich import print as rprint
 
 from agent.config import Config
 from agent.context import build_context, get_file_tree
+from agent.events import (
+    AgentEvent,
+    ConfigMessagePayload,
+    ContextSkippedPayload,
+    ContextSummaryPayload,
+    ContextWarningPayload,
+    EmptyPayload,
+    EventBus,
+    LoggingEventSubscriber,
+    RunCompletedPayload,
+    RunStartedPayload,
+    RunSummaryPayload,
+    StateChangedPayload,
+    build_event_logger,
+)
 from agent.llm import call_llm
 from agent.patcher import apply_changes, git_commit, preview_changes
+from agent.rendering import CliEventRenderer
 
 console = Console()
 HISTORY_FILE = ".code-orbit-history"
@@ -192,12 +208,35 @@ def validate_llm_result(result: Any, config: Config) -> tuple[str, list[dict[str
 
 
 def main() -> None:
+    event_bus = EventBus()
+    event_bus.subscribe(LoggingEventSubscriber(build_event_logger()))
+    event_bus.subscribe(CliEventRenderer(console))
+
     args = parse_args()
     try:
-        config = Config.load(args.config, profile_name=args.profile)
+        config_result = Config.load_with_diagnostics(
+            args.config, profile_name=args.profile
+        )
+        config = config_result.config
     except Exception as e:
+        event_bus.publish(AgentEvent(
+            name="run.failed",
+            level="error",
+            state="loading_config",
+            message=str(e),
+            payload=EmptyPayload(),
+        ))
         console.print(f"[bold red]Error loading config:[/bold red] {e}")
         sys.exit(1)
+
+    for message in config_result.messages:
+        event_bus.publish(AgentEvent(
+            name="config.message",
+            level=message.level,
+            state="loading_config",
+            message=message.text,
+            payload=ConfigMessagePayload(text=message.text),
+        ))
 
     # CLI overrides
     if args.no_interactive:
@@ -219,6 +258,12 @@ def main() -> None:
     save_history(prompt)
 
     target_dir = str(Path(args.dir).resolve())
+    event_bus.publish(AgentEvent(
+        name="run.started",
+        state="starting",
+        message="Agent run started.",
+        payload=RunStartedPayload(target_dir=target_dir, model=config.model),
+    ))
 
     rprint(
         Panel.fit(
@@ -242,51 +287,148 @@ def main() -> None:
         return
 
     # 1. Build context
+    event_bus.publish(AgentEvent(
+        name="state.changed",
+        state="planning",
+        message="Building context.",
+        payload=StateChangedPayload(),
+    ))
     with console.status("[bold green]Analyzing codebase..."):
-        _, context_str = build_context(target_dir, prompt, config)
+        context_result = build_context(target_dir, prompt, config)
+
+    for warning in context_result.token_warnings:
+        event_bus.publish(AgentEvent(
+            name="context.warning",
+            level="warning",
+            state="planning",
+            message=warning,
+            payload=ContextWarningPayload(warning=warning),
+        ))
+
+    if context_result.skipped_paths:
+        event_bus.publish(AgentEvent(
+            name="context.skipped",
+            level="warning",
+            state="planning",
+            payload=ContextSkippedPayload(
+                skipped_count=len(context_result.skipped_paths),
+                paths=tuple(context_result.skipped_paths),
+            ),
+        ))
+
+    event_bus.publish(AgentEvent(
+        name="context.summary",
+        state="planning",
+        payload=ContextSummaryPayload(
+            file_count=len(context_result.entries),
+            used_tokens=context_result.used_tokens,
+            token_budget=context_result.token_budget,
+        ),
+    ))
 
     # 2. Call LLM
+    event_bus.publish(AgentEvent(
+        name="state.changed",
+        state="coding",
+        message="Calling language model.",
+        payload=StateChangedPayload(),
+    ))
     try:
         with console.status("[bold magenta]Model is thinking..."):
-            result = call_llm(prompt, context_str, config)
+            result = call_llm(prompt, context_result.context, config)
     except Exception as e:
+        event_bus.publish(AgentEvent(
+            name="run.failed",
+            level="error",
+            state="coding",
+            message=str(e),
+            payload=EmptyPayload(),
+        ))
         console.print(f"\n[bold red]Error calling LLM:[/bold red] {e}")
         sys.exit(1)
 
     try:
         summary, changes = validate_llm_result(result, config)
     except ValueError as e:
+        event_bus.publish(AgentEvent(
+            name="run.failed",
+            level="error",
+            state="validating",
+            message=str(e),
+            payload=EmptyPayload(),
+        ))
         console.print(f"\n[bold red]Invalid model response:[/bold red] {e}")
         sys.exit(1)
 
-    rprint(f"\n[bold cyan]💡 Summary:[/bold cyan] {summary}")
-    rprint(f"[dim]Files to change:[/dim] {len(changes)}")
+    event_bus.publish(AgentEvent(
+        name="run.summary",
+        state="validating",
+        payload=RunSummaryPayload(summary=summary, change_count=len(changes)),
+    ))
 
     if not changes:
-        rprint("\n[bold green]✅ No changes needed.[/bold green]")
+        event_bus.publish(AgentEvent(
+            name="run.no_changes",
+            state="completed",
+            message="No changes needed.",
+            payload=EmptyPayload(),
+        ))
         return
 
     # 3. Preview
-    preview_changes(target_dir, changes)
+    event_bus.publish(AgentEvent(
+        name="state.changed",
+        state="previewing",
+        message="Previewing proposed changes.",
+        payload=StateChangedPayload(),
+    ))
+    preview_changes(target_dir, changes, event_bus=event_bus)
 
     # 4. Confirm (if interactive)
     if config.interactive:
+        event_bus.publish(AgentEvent(
+            name="state.changed",
+            state="waiting_for_user",
+            message="Waiting for user confirmation.",
+            payload=StateChangedPayload(),
+        ))
         print()
         if not Confirm.ask("[bold yellow]Apply these changes?[/bold yellow]"):
-            rprint("[bold red]❌ Aborted.[/bold red]")
+            event_bus.publish(AgentEvent(
+                name="run.aborted",
+                level="warning",
+                state="waiting_for_user",
+                message="User aborted run.",
+                payload=EmptyPayload(),
+            ))
             sys.exit(0)
 
     # 5. Apply
+    event_bus.publish(AgentEvent(
+        name="state.changed",
+        state="applying",
+        message="Applying changes.",
+        payload=StateChangedPayload(),
+    ))
     rprint("\n[bold green]📝 Applying changes...[/bold green]")
-    affected = apply_changes(target_dir, changes)
+    affected = apply_changes(target_dir, changes, event_bus=event_bus)
 
     # 6. Commit (optional)
     if config.auto_commit and affected:
-        git_commit(target_dir, summary, affected)
+        event_bus.publish(AgentEvent(
+            name="state.changed",
+            state="committing",
+            message="Creating git commit.",
+            payload=StateChangedPayload(),
+        ))
+        git_commit(target_dir, summary, affected, event_bus=event_bus)
 
-    rprint(
-        f"\n[bold green]✅ Done![/bold green] [white]{len(affected)} file(s) updated.[/white]"
-    )
+    event_bus.publish(AgentEvent(
+        name="run.completed",
+        state="completed",
+        message="Agent run completed.",
+        payload=RunCompletedPayload(affected_count=len(affected)),
+    ))
 
 
 if __name__ == "__main__":

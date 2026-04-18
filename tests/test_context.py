@@ -33,18 +33,19 @@ def test_build_context(temp_codebase: Path) -> None:
     config = Config(ignore_patterns=[".git", "node_modules"])
     prompt = "Update the Python source files"
 
-    entries, context_str = build_context(str(temp_codebase), prompt, config)
+    result = build_context(str(temp_codebase), prompt, config)
 
-    paths = [entry.path for entry in entries]
+    paths = [entry.path for entry in result.entries]
     assert "README.md" in paths
     assert "src/main.py" in paths
     assert "src/utils.py" in paths
     assert all(".git" not in path for path in paths)
     assert all("node_modules" not in path for path in paths)
 
-    assert "<codebase>" in context_str
-    assert '<file path="src/main.py">' in context_str
-    assert "print('hello')" in context_str
+    assert "<codebase>" in result.context
+    assert '<file path="src/main.py">' in result.context
+    assert "print('hello')" in result.context
+    assert result.used_tokens > 0
 
 
 def test_context_token_limit(temp_codebase: Path) -> None:
@@ -57,12 +58,13 @@ def test_context_token_limit(temp_codebase: Path) -> None:
     )
     prompt = "Update the Python source files"
 
-    entries, _ = build_context(str(temp_codebase), prompt, config)
+    result = build_context(str(temp_codebase), prompt, config)
 
-    paths = [entry.path for entry in entries]
+    paths = [entry.path for entry in result.entries]
     assert "src/main.py" in paths
     assert "src/utils.py" in paths
     assert "large.txt" not in paths
+    assert "large.txt" in result.skipped_paths
 
 
 def test_build_context_skips_symlinks(temp_codebase: Path, tmp_path_factory) -> None:
@@ -72,8 +74,8 @@ def test_build_context_skips_symlinks(temp_codebase: Path, tmp_path_factory) -> 
     (temp_codebase / "linked.txt").symlink_to(outside)
 
     config = Config(ignore_patterns=[".git", "node_modules"])
-    entries, context_str = build_context(str(temp_codebase), "Inspect files", config)
+    result = build_context(str(temp_codebase), "Inspect files", config)
 
-    paths = [entry.path for entry in entries]
+    paths = [entry.path for entry in result.entries]
     assert "linked.txt" not in paths
-    assert "secret" not in context_str
+    assert "secret" not in result.context
