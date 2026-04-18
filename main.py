@@ -8,9 +8,12 @@ Usage:
 """
 
 import argparse
+import os
 import json
 import asyncio
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from rich.console import Console
@@ -45,7 +48,6 @@ from agent.rendering import CliEventRenderer
 console = Console()
 HISTORY_FILE = ".code-orbit-history"
 ALLOWED_ACTIONS = {"create", "update", "delete"}
-PLAN_DRAFT_NAME = "plan.json"
 
 
 def parse_args() -> argparse.Namespace:
@@ -195,19 +197,39 @@ def validate_llm_result(
     return result.summary, validated_changes
 
 
-def build_plan_draft_path(target_dir: str) -> Path:
-    return Path(target_dir).resolve() / ".code-orbit" / PLAN_DRAFT_NAME
+def create_plan_draft_path() -> Path:
+    fd, temp_name = tempfile.mkstemp(prefix="code-orbit-plan-", suffix=".json")
+    os.close(fd)
+    return Path(temp_name)
 
 
-def save_plan_draft(target_dir: str, plan: PlanSchema) -> Path:
-    plan_path = build_plan_draft_path(target_dir)
-    plan_path.parent.mkdir(parents=True, exist_ok=True)
+def write_plan_draft(plan_path: Path, plan: PlanSchema) -> None:
     plan_path.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
-    return plan_path
 
 
 def load_plan_draft(plan_path: Path) -> PlanSchema:
     return PlanSchema.model_validate_json(plan_path.read_text(encoding="utf-8"))
+
+
+def open_plan_in_editor(plan_path: Path) -> PlanSchema:
+    while True:
+        editor = os.environ.get("EDITOR", "vim")
+        result = subprocess.run([editor, str(plan_path)], check=False)
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Editor exited with status {result.returncode}. "
+                "Plan editing was aborted."
+            )
+
+        try:
+            return load_plan_draft(plan_path)
+        except Exception as exc:
+            console.print(f"\n[bold red]Invalid plan file:[/bold red] {exc}")
+            if not Confirm.ask(
+                "[bold yellow]Open the editor again to fix the plan?[/bold yellow]",
+                default=True,
+            ):
+                raise
 
 
 def format_plan_for_display(plan: PlanSchema) -> str:
@@ -389,8 +411,9 @@ async def main() -> None:
         console.print(f"\n[bold red]Error calling architect:[/bold red] {e}")
         sys.exit(1)
 
+    plan_path = create_plan_draft_path()
     try:
-        plan_path = save_plan_draft(target_dir, plan)
+        write_plan_draft(plan_path, plan)
     except OSError as e:
         event_bus.publish(AgentEvent(
             name="run.failed",
@@ -420,38 +443,83 @@ async def main() -> None:
         )
     )
 
-    if not plan.tasks:
-        event_bus.publish(AgentEvent(
-            name="run.no_changes",
-            state="completed",
-            message="No changes needed.",
-            payload=EmptyPayload(),
-        ))
-        return
-
-    approved_plan = plan
-    if config.interactive:
-        event_bus.publish(AgentEvent(
-            name="state.changed",
-            state="waiting_for_user",
-            message="Waiting for plan approval.",
-            payload=StateChangedPayload(),
-        ))
-        print()
-        if not Confirm.ask(
-            "[bold yellow]Review or edit .code-orbit/plan.json, then continue?[/bold yellow]"
-        ):
+    try:
+        if not plan.tasks:
             event_bus.publish(AgentEvent(
-                name="run.aborted",
-                level="warning",
-                state="waiting_for_user",
-                message="User aborted run.",
+                name="run.no_changes",
+                state="completed",
+                message="No changes needed.",
                 payload=EmptyPayload(),
             ))
-            sys.exit(0)
+            return
+
+        approved_plan = plan
+        if config.interactive:
+            event_bus.publish(AgentEvent(
+                name="state.changed",
+                state="editing_plan",
+                message="Opening plan editor.",
+                payload=StateChangedPayload(),
+            ))
+            try:
+                approved_plan = open_plan_in_editor(plan_path)
+            except Exception as e:
+                event_bus.publish(AgentEvent(
+                    name="run.failed",
+                    level="error",
+                    state="editing_plan",
+                    message=str(e),
+                    payload=EmptyPayload(),
+                ))
+                console.print(f"\n[bold red]Plan editing aborted:[/bold red] {e}")
+                sys.exit(1)
+
+        # 3. Call coder
+        event_bus.publish(AgentEvent(
+            name="state.changed",
+            state="coding",
+            message="Generating file replacements.",
+            payload=StateChangedPayload(),
+        ))
         try:
-            approved_plan = load_plan_draft(plan_path)
+            progress = Progress(
+                SpinnerColumn(style="bold magenta"),
+                TextColumn("{task.description}"),
+                transient=True,
+                console=console,
+            )
+            task_id = progress.add_task("Coder is streaming response...", total=None)
+            chunk_count = 0
+
+            def on_chunk(_chunk: str) -> None:
+                nonlocal chunk_count
+                chunk_count += 1
+                progress.update(
+                    task_id,
+                    description=f"Coder is streaming response... ({chunk_count} chunks)",
+                )
+
+            with Live(progress, console=console, refresh_per_second=12):
+                result = await call_coder(
+                    approved_plan,
+                    context_result.context,
+                    config,
+                    on_chunk=on_chunk,
+                )
         except Exception as e:
+            event_bus.publish(AgentEvent(
+                name="run.failed",
+                level="error",
+                state="coding",
+                message=str(e),
+                payload=EmptyPayload(),
+            ))
+            console.print(f"\n[bold red]Error calling coder:[/bold red] {e}")
+            sys.exit(1)
+
+        try:
+            summary, changes = validate_llm_result(result, config)
+        except ValueError as e:
             event_bus.publish(AgentEvent(
                 name="run.failed",
                 level="error",
@@ -459,135 +527,81 @@ async def main() -> None:
                 message=str(e),
                 payload=EmptyPayload(),
             ))
-            console.print(f"\n[bold red]Invalid approved plan:[/bold red] {e}")
+            console.print(f"\n[bold red]Invalid model response:[/bold red] {e}")
             sys.exit(1)
 
-    # 3. Call coder
-    event_bus.publish(AgentEvent(
-        name="state.changed",
-        state="coding",
-        message="Generating file replacements.",
-        payload=StateChangedPayload(),
-    ))
-    try:
-        progress = Progress(
-            SpinnerColumn(style="bold magenta"),
-            TextColumn("{task.description}"),
-            transient=True,
-            console=console,
+        event_bus.emit(
+            "run.proposal_ready",
+            RunProposalReadyPayload(summary=summary, change_count=len(changes)),
+            state="validated",
+            message="Model response validated.",
         )
-        task_id = progress.add_task("Coder is streaming response...", total=None)
-        chunk_count = 0
 
-        def on_chunk(_chunk: str) -> None:
-            nonlocal chunk_count
-            chunk_count += 1
-            progress.update(
-                task_id,
-                description=f"Coder is streaming response... ({chunk_count} chunks)",
-            )
-
-        with Live(progress, console=console, refresh_per_second=12):
-            result = await call_coder(
-                approved_plan,
-                context_result.context,
-                config,
-                on_chunk=on_chunk,
-            )
-    except Exception as e:
-        event_bus.publish(AgentEvent(
-            name="run.failed",
-            level="error",
-            state="coding",
-            message=str(e),
-            payload=EmptyPayload(),
-        ))
-        console.print(f"\n[bold red]Error calling coder:[/bold red] {e}")
-        sys.exit(1)
-
-    try:
-        summary, changes = validate_llm_result(result, config)
-    except ValueError as e:
-        event_bus.publish(AgentEvent(
-            name="run.failed",
-            level="error",
-            state="validating",
-            message=str(e),
-            payload=EmptyPayload(),
-        ))
-        console.print(f"\n[bold red]Invalid model response:[/bold red] {e}")
-        sys.exit(1)
-
-    event_bus.emit(
-        "run.proposal_ready",
-        RunProposalReadyPayload(summary=summary, change_count=len(changes)),
-        state="validated",
-        message="Model response validated.",
-    )
-
-    if not changes:
-        event_bus.publish(AgentEvent(
-            name="run.no_changes",
-            state="completed",
-            message="No changes needed.",
-            payload=EmptyPayload(),
-        ))
-        return
-
-    # 4. Preview
-    event_bus.publish(AgentEvent(
-        name="state.changed",
-        state="previewing",
-        message="Previewing proposed changes.",
-        payload=StateChangedPayload(),
-    ))
-    preview_changes(target_dir, changes, event_bus=event_bus)
-
-    # 5. Confirm (if interactive)
-    if config.interactive:
-        event_bus.publish(AgentEvent(
-            name="state.changed",
-            state="waiting_for_user",
-            message="Waiting for user confirmation.",
-            payload=StateChangedPayload(),
-        ))
-        print()
-        if not Confirm.ask("[bold yellow]Apply these changes?[/bold yellow]"):
+        if not changes:
             event_bus.publish(AgentEvent(
-                name="run.aborted",
-                level="warning",
-                state="waiting_for_user",
-                message="User aborted run.",
+                name="run.no_changes",
+                state="completed",
+                message="No changes needed.",
                 payload=EmptyPayload(),
             ))
-            sys.exit(0)
+            return
 
-    # 6. Apply
-    event_bus.publish(AgentEvent(
-        name="state.changed",
-        state="applying",
-        message="Applying changes.",
-        payload=StateChangedPayload(),
-    ))
-    rprint("\n[bold green]📝 Applying changes...[/bold green]")
-    affected = apply_changes(target_dir, changes, event_bus=event_bus)
-
-    # 7. Commit (optional)
-    if config.auto_commit and affected:
+        # 4. Preview
         event_bus.publish(AgentEvent(
             name="state.changed",
-            state="committing",
-            message="Creating git commit.",
+            state="previewing",
+            message="Previewing proposed changes.",
             payload=StateChangedPayload(),
         ))
-        git_commit(target_dir, summary, affected, event_bus=event_bus)
+        preview_changes(target_dir, changes, event_bus=event_bus)
 
-    event_bus.publish(AgentEvent(
-        name="run.completed",
-        state="completed",
-        message="Agent run completed.",
-        payload=RunCompletedPayload(affected_count=len(affected)),
-    ))
+        # 5. Confirm (if interactive)
+        if config.interactive:
+            event_bus.publish(AgentEvent(
+                name="state.changed",
+                state="waiting_for_user",
+                message="Waiting for user confirmation.",
+                payload=StateChangedPayload(),
+            ))
+            print()
+            if not Confirm.ask("[bold yellow]Apply these changes?[/bold yellow]"):
+                event_bus.publish(AgentEvent(
+                    name="run.aborted",
+                    level="warning",
+                    state="waiting_for_user",
+                    message="User aborted run.",
+                    payload=EmptyPayload(),
+                ))
+                sys.exit(0)
+
+        # 6. Apply
+        event_bus.publish(AgentEvent(
+            name="state.changed",
+            state="applying",
+            message="Applying changes.",
+            payload=StateChangedPayload(),
+        ))
+        rprint("\n[bold green]📝 Applying changes...[/bold green]")
+        affected = apply_changes(target_dir, changes, event_bus=event_bus)
+
+        # 7. Commit (optional)
+        if config.auto_commit and affected:
+            event_bus.publish(AgentEvent(
+                name="state.changed",
+                state="committing",
+                message="Creating git commit.",
+                payload=StateChangedPayload(),
+            ))
+            git_commit(target_dir, summary, affected, event_bus=event_bus)
+
+        event_bus.publish(AgentEvent(
+            name="run.completed",
+            state="completed",
+            message="Agent run completed.",
+            payload=RunCompletedPayload(affected_count=len(affected)),
+        ))
+    finally:
+        plan_path.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 from agent.config import Config
 from agent.events import AgentEvent, EventBus, RunProposalReadyPayload
 from agent.llm import ChangeSchema, LLMResponseSchema, PlanSchema, PlanTaskSchema
-from main import validate_llm_result
+from main import open_plan_in_editor, validate_llm_result
 
 
 def test_validate_llm_result_rejects_delete_by_default() -> None:
@@ -124,3 +124,42 @@ def test_plan_schema_accepts_multiple_tasks() -> None:
     )
 
     assert plan.tasks[0].files == ["src/app.py"]
+
+
+def test_open_plan_in_editor_parses_modified_plan(monkeypatch, tmp_path) -> None:
+    original = PlanSchema(
+        summary="Draft plan",
+        tasks=[
+            PlanTaskSchema(
+                files=["src/app.py"],
+                goal="Initial goal",
+                reasoning="Start with the entry point.",
+            )
+        ],
+    )
+    edited = PlanSchema(
+        summary="Edited plan",
+        tasks=[
+            PlanTaskSchema(
+                files=["src/app.py", "agent/llm.py"],
+                goal="Update both layers",
+                reasoning="The user edited the draft before approval.",
+            )
+        ],
+    )
+
+    temp_path = tmp_path / "code-orbit-plan.json"
+
+    def fake_run(cmd, check=False):
+        assert cmd[0] == "vim"
+        temp_path.write_text(edited.model_dump_json(indent=2), encoding="utf-8")
+        return __import__("subprocess").CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr("main.subprocess.run", fake_run)
+    monkeypatch.setenv("EDITOR", "vim")
+    temp_path.write_text(original.model_dump_json(indent=2), encoding="utf-8")
+
+    approved = open_plan_in_editor(temp_path)
+
+    assert approved.summary == "Edited plan"
+    assert approved.tasks[0].files == ["src/app.py", "agent/llm.py"]
