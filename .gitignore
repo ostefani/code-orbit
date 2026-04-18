@@ -36,5 +36,6 @@ config.yaml.local
 .vscode/
 .idea/
 .DS_Store
+.code-orbit
 
 INNER_DOC/
