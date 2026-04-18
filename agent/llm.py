@@ -1,7 +1,8 @@
+from collections.abc import Callable
 from typing import Literal
 
+from openai import AsyncOpenAI
 from pydantic import BaseModel, Field, ValidationError, model_validator
-from openai import OpenAI
 from .config import Config
 
 SYSTEM_PROMPT = """\
@@ -49,18 +50,24 @@ class LLMResponseSchema(BaseModel):
     changes: list[ChangeSchema] = Field(default_factory=list)
 
 
-def call_llm(prompt: str, context: str, config: Config) -> LLMResponseSchema:
+async def call_llm(
+    prompt: str,
+    context: str,
+    config: Config,
+    on_chunk: Callable[[str], None] | None = None,
+) -> LLMResponseSchema:
     """
     Send prompt + codebase context to llama.cpp and return parsed JSON response.
     """
-    client = OpenAI(
+    client = AsyncOpenAI(
         base_url=config.api_base,
         api_key=config.api_key,
+        timeout=60.0,
     )
 
     user_message = f"{context}\n\n<task>\n{prompt}\n</task>"
 
-    response = client.chat.completions.create(
+    stream = await client.chat.completions.create(
         model=config.model,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -69,20 +76,20 @@ def call_llm(prompt: str, context: str, config: Config) -> LLMResponseSchema:
         max_tokens=config.max_response_tokens,
         temperature=0.2,  # Low temp for deterministic code edits
         response_format={"type": "json_object"},
+        stream=True,
     )
 
-    # raw = response.choices[0].message.content.strip()
+    chunks: list[str] = []
+    async for event in stream:
+        delta = event.choices[0].delta.content
+        if isinstance(delta, str) and delta:
+            chunks.append(delta)
+            if on_chunk is not None:
+                on_chunk(delta)
 
-    message = response.choices[0].message
-    content = message.content
-
-    if content is None:
+    content = "".join(chunks).strip()
+    if not content:
         raise ValueError("Model returned empty content.")
-
-    if not isinstance(content, str):
-        raise ValueError(
-            f"Expected string content, got {type(content).__name__}: {content!r}"
-        )
 
     try:
         return LLMResponseSchema.model_validate_json(content)

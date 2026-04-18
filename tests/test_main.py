@@ -5,10 +5,10 @@ from main import validate_llm_result
 
 
 def test_validate_llm_result_rejects_delete_by_default() -> None:
-    result = {
-        "summary": "Remove file",
-        "changes": [ChangeSchema(path="danger.txt", action="delete")],
-    }
+    result = LLMResponseSchema(
+        summary="Remove file",
+        changes=[ChangeSchema(path="danger.txt", action="delete")],
+    )
 
     config = Config()
 
@@ -21,13 +21,13 @@ def test_validate_llm_result_rejects_delete_by_default() -> None:
 
 
 def test_validate_llm_result_rejects_duplicate_paths() -> None:
-    result = {
-        "summary": "Conflicting changes",
-        "changes": [
+    result = LLMResponseSchema(
+        summary="Conflicting changes",
+        changes=[
             ChangeSchema(path="same.py", action="update", content="a"),
             ChangeSchema(path="same.py", action="create", content="b"),
         ],
-    }
+    )
 
     config = Config(allow_delete=True)
 
