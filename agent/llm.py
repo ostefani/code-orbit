@@ -41,8 +41,9 @@ RULES:
 
 CODER_SYSTEM_PROMPT = """\
 You are The Coder, a precise code editor.
-You will be given a codebase and an approved implementation plan. Your job is to
-produce exact file replacements only.
+You will be given a codebase, an approved implementation plan, and one approved
+task from that plan. Your job is to produce exact file replacements only for
+that task.
 
 RULES:
 1. Return ONLY a valid JSON object - no markdown, no explanation, no backticks.
@@ -62,8 +63,8 @@ RULES:
 5. Preserve existing code style, indentation, and conventions.
 6. Do not hallucinate file paths - only reference files that exist in the codebase
    (except for "create").
-7. Follow the approved plan exactly. If the plan says no changes are needed,
-   return an empty changes list.
+7. Follow the approved plan and the current task exactly. If the task says no
+   changes are needed, return an empty changes list.
 """
 
 # Backward compatibility for the context builder and any older callers.
@@ -143,6 +144,19 @@ ChangeSchema = CodeChangeSchema
 LLMResponseSchema = CodeResponseSchema
 
 
+def format_plan_roadmap(plan: PlanSchema) -> str:
+    lines = [f"Plan summary: {plan.summary}"]
+    if not plan.tasks:
+        lines.append("Roadmap: no implementation tasks were approved.")
+        return "\n".join(lines)
+
+    lines.append("Roadmap:")
+    for index, task in enumerate(plan.tasks, 1):
+        files = ", ".join(task.files)
+        lines.append(f"{index}. {task.goal} | files: {files}")
+    return "\n".join(lines)
+
+
 async def _call_structured_llm(
     *,
     system_prompt: str,
@@ -205,15 +219,18 @@ async def call_architect(
     return result
 
 
-async def call_coder(
+async def call_coder_for_task(
     plan: PlanSchema,
+    task: PlanTaskSchema,
     context: str,
     config: Config,
     on_chunk: Callable[[str], None] | None = None,
 ) -> CodeResponseSchema:
-    """Ask the coder model for exact file replacements from an approved plan."""
+    """Ask the coder model for exact file replacements for one approved task."""
     user_message = (
-        f"{context}\n\n<approved_plan>\n{plan.model_dump_json(indent=2)}\n</approved_plan>"
+        f"{context}\n\n<approved_plan_summary>\n{format_plan_roadmap(plan)}\n"
+        f"</approved_plan_summary>\n\n<approved_task>\n"
+        f"{task.model_dump_json(indent=2)}\n</approved_task>"
     )
     result = await _call_structured_llm(
         system_prompt=CODER_SYSTEM_PROMPT,
@@ -223,6 +240,24 @@ async def call_coder(
         on_chunk=on_chunk,
     )
     return result
+
+
+async def call_coder(
+    plan: PlanSchema,
+    context: str,
+    config: Config,
+    on_chunk: Callable[[str], None] | None = None,
+) -> CodeResponseSchema:
+    """Backward-compatible wrapper that executes the first approved task."""
+    if not plan.tasks:
+        raise ValueError("Approved plan must contain at least one task.")
+    return await call_coder_for_task(
+        plan=plan,
+        task=plan.tasks[0],
+        context=context,
+        config=config,
+        on_chunk=on_chunk,
+    )
 
 
 async def call_llm(
