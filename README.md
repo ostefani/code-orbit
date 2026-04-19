@@ -136,6 +136,8 @@ auto_commit: false # git commit after applying
 
 For personal overrides without affecting git, use `config.local.yaml` (already in `.gitignore`).
 
+Code Orbit also stores runtime artifacts under `.code-orbit/`, including the embeddings cache and prompt history. That directory is ignored in this repo by default, so you should not commit those generated files.
+
 ## Testing
 
 Run the tests:
