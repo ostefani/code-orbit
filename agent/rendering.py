@@ -13,6 +13,7 @@ from .events import (
     ConfigMessagePayload,
     ContextSkippedPayload,
     ContextSummaryPayload,
+    ContextSemanticMatchPayload,
     ContextWarningPayload,
     GitCommitFailedPayload,
     GitCommitSucceededPayload,
@@ -48,6 +49,21 @@ class CliEventRenderer:
                 f"\n[dim]Context:[/dim] {event.payload.file_count} files | "
                 f"~{event.payload.used_tokens:,} file tokens"
             )
+            return
+
+        if event.name == "context.semantic_matches" and isinstance(
+            event.payload, ContextSemanticMatchPayload
+        ):
+            self.console.print(
+                f"\n[dim]Semantic matches for:[/dim] {event.payload.prompt}"
+            )
+            for match in event.payload.matches[:5]:
+                self.console.print(
+                    f"  - {match.path} "
+                    f"[dim](semantic {match.semantic_score:.2f}, "
+                    f"lexical {match.lexical_score:.2f}, "
+                    f"blended {match.blended_score:.2f})[/dim]"
+                )
             return
 
         if event.name == "context.skipped" and isinstance(

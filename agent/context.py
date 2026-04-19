@@ -1,3 +1,4 @@
+import asyncio
 import fnmatch
 import re
 from dataclasses import dataclass
@@ -12,8 +13,19 @@ from .constants import (
     STOPWORDS,
     TEST_HINTS,
 )
+from .embeddings import (
+    EmbeddingClient,
+    EmbeddingSyncResult,
+    build_embedding_index,
+    default_embedding_cache_path,
+    OpenAICompatibleEmbeddingClient,
+)
+from .events import ContextWarningPayload, EventBus
 from .llm import SYSTEM_PROMPT
 from .token_counter import count_tokens
+
+
+_SEMANTIC_SCORE_WEIGHT = 45.0
 
 
 @dataclass
@@ -38,6 +50,15 @@ class ContextBuildResult:
     used_tokens: int
     token_budget: int
     token_warnings: tuple[str, ...]
+    semantic_matches: tuple["SemanticMatch", ...] = ()
+
+
+@dataclass(frozen=True)
+class SemanticMatch:
+    path: str
+    semantic_score: float
+    lexical_score: float
+    blended_score: float
 
 
 def _is_ignored(path: Path, root: Path, patterns: list[str]) -> bool:
@@ -86,7 +107,12 @@ def _score_file_entry(entry: FileEntry, prompt: str) -> float:
     return _score_path(entry.path, entry.tokens, prompt)
 
 
-def _score_path(path: str, estimated_tokens: int, prompt: str) -> float:
+def _score_path(
+    path: str,
+    estimated_tokens: int,
+    prompt: str,
+    semantic_score: float = 0.0,
+) -> float:
     path_obj = Path(path)
     path_lower = path.lower()
     name_lower = path_obj.name.lower()
@@ -140,6 +166,9 @@ def _score_path(path: str, estimated_tokens: int, prompt: str) -> float:
     elif estimated_tokens > 2000:
         score -= 6
 
+    # 8. Semantic relevance from RAG.
+    score += max(0.0, min(1.0, semantic_score)) * _SEMANTIC_SCORE_WEIGHT
+
     return score
 
 
@@ -180,7 +209,15 @@ def _compute_context_budget(prompt: str, config: Config) -> tuple[int, tuple[str
     return max(0, budget), scaffold_result.warnings
 
 
-def build_context(root: str, prompt: str, config: Config) -> ContextBuildResult:
+async def build_context_async(
+    root: str,
+    prompt: str,
+    config: Config,
+    *,
+    embedding_client: EmbeddingClient | None = None,
+    cache_path: Path | None = None,
+    event_bus: EventBus | None = None,
+) -> ContextBuildResult:
     """
     Walk the directory and collect files into context.
     Returns (file_entries, formatted_context_string).
@@ -213,12 +250,63 @@ def build_context(root: str, prompt: str, config: Config) -> ContextBuildResult:
                 continue
             candidates.append(candidate)
 
-    candidates.sort(
-        key=lambda candidate: (
-            -_score_path(candidate.path, max(1, candidate.size_bytes // 3), prompt),
-            candidate.size_bytes,
+    semantic_scores: dict[str, float] = {}
+    semantic_client = embedding_client or OpenAICompatibleEmbeddingClient(
+        api_base=config.embedding_api_base,
+        api_key=config.api_key,
+        model=config.embedding_model,
+    )
+    owns_semantic_client = embedding_client is None
+
+    try:
+        try:
+            embedding_result: EmbeddingSyncResult = await build_embedding_index(
+                root_path,
+                config,
+                cache_path=cache_path or default_embedding_cache_path(root_path),
+                client=semantic_client,
+                batch_size=config.embedding_batch_size,
+            )
+            prompt_vector = (await semantic_client.embed([prompt]))[0]
+            semantic_scores = embedding_result.vector_store.semantic_scores(
+                prompt_vector
+            )
+        except Exception as exc:
+            if event_bus is not None:
+                event_bus.emit(
+                    "context.warning",
+                    ContextWarningPayload(
+                        warning=f"Semantic ranking unavailable: {exc}"
+                    ),
+                    level="warning",
+                    state="building_context",
+                    message="Semantic ranking unavailable.",
+                )
+            semantic_scores = {}
+    finally:
+        if owns_semantic_client:
+            close = getattr(semantic_client, "aclose", None)
+            if close is not None:
+                await close()
+
+    scored_candidates: list[tuple[float, FileCandidate, float, float]] = []
+    for candidate in candidates:
+        semantic_score = semantic_scores.get(candidate.path, 0.0)
+        lexical_score = _score_path(
             candidate.path,
+            max(1, candidate.size_bytes // 3),
+            prompt,
+            semantic_score=0.0,
         )
+        blended_score = lexical_score + max(
+            0.0, min(1.0, semantic_score)
+        ) * _SEMANTIC_SCORE_WEIGHT
+        scored_candidates.append(
+            (blended_score, candidate, lexical_score, semantic_score)
+        )
+
+    scored_candidates.sort(
+        key=lambda item: (-item[0], item[1].size_bytes, item[1].path)
     )
 
     token_budget, initial_warnings = _compute_context_budget(prompt, config)
@@ -226,8 +314,9 @@ def build_context(root: str, prompt: str, config: Config) -> ContextBuildResult:
     included: list[FileEntry] = []
     skipped: list[str] = []
     token_warnings: list[str] = list(initial_warnings)
+    included_paths: set[str] = set()
 
-    for candidate in candidates:
+    for _, candidate, _lexical_score, _semantic_score in scored_candidates:
         path = root_path / candidate.path
         try:
             content = path.read_text(encoding="utf-8", errors="ignore")
@@ -251,7 +340,37 @@ def build_context(root: str, prompt: str, config: Config) -> ContextBuildResult:
                 tokens=tokens,
             )
         )
+        included_paths.add(candidate.path)
         used_tokens += tokens
+
+    semantic_matches: tuple[SemanticMatch, ...] = ()
+    if semantic_scores:
+        score_lookup = {
+            candidate.path: (lexical_score, blended_score, semantic_score)
+            for blended_score, candidate, lexical_score, semantic_score in scored_candidates
+        }
+        ordered_matches = sorted(
+            [
+                (
+                    path,
+                    semantic_scores[path],
+                    score_lookup[path][0],
+                    score_lookup[path][1],
+                )
+                for path in included_paths
+                if path in semantic_scores and semantic_scores[path] > 0.0
+            ],
+            key=lambda item: (-item[1], item[0]),
+        )
+        semantic_matches = tuple(
+            SemanticMatch(
+                path=path,
+                semantic_score=score,
+                lexical_score=lexical,
+                blended_score=blended,
+            )
+            for path, score, lexical, blended in ordered_matches[:10]
+        )
 
     parts = ["<codebase>"]
     for entry in included:
@@ -269,6 +388,7 @@ def build_context(root: str, prompt: str, config: Config) -> ContextBuildResult:
         used_tokens=used_tokens,
         token_budget=token_budget,
         token_warnings=deduped_warnings,
+        semantic_matches=semantic_matches,
     )
 
 

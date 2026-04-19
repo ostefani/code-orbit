@@ -1,8 +1,11 @@
+import asyncio
+
 import pytest
 from pathlib import Path
 
 from agent.config import Config
-from agent.context import _is_ignored, build_context
+from agent.context import _is_ignored, build_context_async
+from agent.events import EventBus
 
 
 @pytest.fixture
@@ -33,7 +36,9 @@ def test_build_context(temp_codebase: Path) -> None:
     config = Config(ignore_patterns=[".git", "node_modules"])
     prompt = "Update the Python source files"
 
-    result = build_context(str(temp_codebase), prompt, config)
+    result = asyncio.run(
+        build_context_async(str(temp_codebase), prompt, config)
+    )
 
     paths = [entry.path for entry in result.entries]
     assert "README.md" in paths
@@ -58,7 +63,9 @@ def test_context_token_limit(temp_codebase: Path) -> None:
     )
     prompt = "Update the Python source files"
 
-    result = build_context(str(temp_codebase), prompt, config)
+    result = asyncio.run(
+        build_context_async(str(temp_codebase), prompt, config)
+    )
 
     paths = [entry.path for entry in result.entries]
     assert "src/main.py" in paths
@@ -74,8 +81,109 @@ def test_build_context_skips_symlinks(temp_codebase: Path, tmp_path_factory) -> 
     (temp_codebase / "linked.txt").symlink_to(outside)
 
     config = Config(ignore_patterns=[".git", "node_modules"])
-    result = build_context(str(temp_codebase), "Inspect files", config)
+    result = asyncio.run(
+        build_context_async(str(temp_codebase), "Inspect files", config)
+    )
 
     paths = [entry.path for entry in result.entries]
     assert "linked.txt" not in paths
     assert "secret" not in result.context
+
+
+class FakeSemanticEmbeddingClient:
+    async def embed(self, texts):
+        vectors = []
+        for text in texts:
+            lower = text.lower()
+            if "rate limiting" in lower:
+                vectors.append((1.0, 0.0))
+            elif "authentication" in lower or "middleware" in lower:
+                vectors.append((0.99, 0.01))
+            elif "rate limiter" in lower or "rate" in lower:
+                vectors.append((0.05, 0.95))
+            else:
+                vectors.append((0.0, 1.0))
+        return vectors
+
+
+def test_build_context_uses_semantic_ranking(temp_codebase: Path) -> None:
+    (temp_codebase / "src" / "auth").mkdir(parents=True, exist_ok=True)
+    (temp_codebase / "src" / "auth" / "middleware.py").write_text(
+        "def apply_authentication(request):\n    return request\n",
+        encoding="utf-8",
+    )
+    (temp_codebase / "src" / "rate_limiter.py").write_text(
+        "def helper():\n    return 'unrelated'\n",
+        encoding="utf-8",
+    )
+
+    config = Config(
+        ignore_patterns=[".git", "node_modules"],
+        max_context_tokens=6000,
+        max_response_tokens=100,
+    )
+    result = asyncio.run(
+        build_context_async(
+            str(temp_codebase),
+            "Implement rate limiting",
+            config,
+            embedding_client=FakeSemanticEmbeddingClient(),
+        )
+    )
+
+    assert result.entries[0].path == "src/auth/middleware.py"
+    assert result.semantic_matches
+    assert result.semantic_matches[0].path == "src/auth/middleware.py"
+
+
+def test_build_context_async_runs_inside_event_loop(temp_codebase: Path) -> None:
+    (temp_codebase / "src" / "auth").mkdir(parents=True, exist_ok=True)
+    (temp_codebase / "src" / "auth" / "middleware.py").write_text(
+        "def apply_authentication(request):\n    return request\n",
+        encoding="utf-8",
+    )
+
+    config = Config(ignore_patterns=[".git", "node_modules"])
+
+    async def runner() -> None:
+        result = await build_context_async(
+            str(temp_codebase),
+            "Implement rate limiting",
+            config,
+            embedding_client=FakeSemanticEmbeddingClient(),
+        )
+        assert result.entries
+        assert result.semantic_matches
+
+    asyncio.run(runner())
+
+
+def test_build_context_emits_warning_on_semantic_failure(
+    temp_codebase: Path,
+) -> None:
+    (temp_codebase / "src" / "auth").mkdir(parents=True, exist_ok=True)
+    (temp_codebase / "src" / "auth" / "middleware.py").write_text(
+        "def apply_authentication(request):\n    return request\n",
+        encoding="utf-8",
+    )
+
+    class FailingEmbeddingClient:
+        async def embed(self, texts):
+            raise RuntimeError("boom")
+
+    bus = EventBus()
+    events: list[object] = []
+    bus.subscribe(events.append)
+
+    result = asyncio.run(
+        build_context_async(
+            str(temp_codebase),
+            "Implement rate limiting",
+            Config(ignore_patterns=[".git", "node_modules"]),
+            embedding_client=FailingEmbeddingClient(),
+            event_bus=bus,
+        )
+    )
+
+    assert result.entries
+    assert any(getattr(event, "name", "") == "context.warning" for event in events)

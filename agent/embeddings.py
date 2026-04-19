@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import ast
+import inspect
 import hashlib
 import json
 import math
@@ -92,6 +93,18 @@ class OpenAICompatibleEmbeddingClient:
         response = await client.embeddings.create(model=self.model, input=list(texts))
         return [tuple(item.embedding) for item in response.data]
 
+    async def aclose(self) -> None:
+        client = self._client
+        if client is None:
+            return
+
+        close = getattr(client, "aclose", None) or getattr(client, "close", None)
+        if close is not None:
+            result = close()
+            if inspect.isawaitable(result):
+                await result
+        self._client = None
+
 
 @dataclass
 class EmbeddingCache:
@@ -179,12 +192,64 @@ class VectorStore:
     def add(self, record: FileEmbeddingRecord) -> None:
         self._records[record.path] = record
 
+    def semantic_scores(self, query_vector: Sequence[float]) -> dict[str, float]:
+        try:
+            import numpy as np
+        except ImportError:
+            scores: dict[str, float] = {}
+            for record in self._records.values():
+                best_score = 0.0
+                for chunk in record.chunks:
+                    best_score = max(
+                        best_score,
+                        max(0.0, _cosine_similarity(query_vector, chunk.vector)),
+                    )
+                scores[record.path] = best_score
+            return scores
+
+        query = np.asarray(query_vector, dtype=np.float64)
+        query_norm = float(np.linalg.norm(query))
+        if query_norm < 1e-10:
+            return {record.path: 0.0 for record in self._records.values()}
+
+        scores: dict[str, float] = {}
+        for record in self._records.values():
+            if not record.chunks:
+                scores[record.path] = 0.0
+                continue
+
+            matrix = np.asarray([chunk.vector for chunk in record.chunks], dtype=np.float64)
+            norms = np.linalg.norm(matrix, axis=1)
+            valid = norms > 1e-10
+            if not np.any(valid):
+                scores[record.path] = 0.0
+                continue
+
+            dot_products = matrix @ query
+            cosines = np.zeros(len(record.chunks), dtype=np.float64)
+            cosines[valid] = dot_products[valid] / (norms[valid] * query_norm)
+            scores[record.path] = float(np.max(np.maximum(cosines, 0.0)))
+
+        return scores
+
+    def score_path(self, path: str, query_vector: Sequence[float]) -> float:
+        record = self._records.get(path)
+        if record is None:
+            return 0.0
+        best_score = 0.0
+        for chunk in record.chunks:
+            best_score = max(
+                best_score,
+                max(0.0, _cosine_similarity(query_vector, chunk.vector)),
+            )
+        return best_score
+
     def search(self, query_vector: Sequence[float], top_k: int = 10) -> list[EmbeddingSearchResult]:
         results: list[EmbeddingSearchResult] = []
         for record in self._records.values():
             best_result: EmbeddingSearchResult | None = None
             for chunk in record.chunks:
-                score = _cosine_similarity(query_vector, chunk.vector)
+                score = max(0.0, _cosine_similarity(query_vector, chunk.vector))
                 candidate = EmbeddingSearchResult(
                     path=record.path,
                     score=score,
@@ -451,6 +516,7 @@ async def build_embedding_index(
     if not cache.is_compatible(config):
         cache = EmbeddingCache(model=config.embedding_model, api_base=config.embedding_api_base)
 
+    owns_client = client is None
     embedding_client = client or OpenAICompatibleEmbeddingClient(
         api_base=config.embedding_api_base,
         api_key=config.api_key,
@@ -525,25 +591,31 @@ async def build_embedding_index(
                 )
             )
 
-    for rel_path, (file_hash, _) in pending_files.items():
-        cache.files[rel_path] = FileEmbeddingRecord(
-            path=rel_path,
-            sha256=file_hash,
-            chunks=tuple(sorted(refreshed_records.get(rel_path, []), key=lambda item: item.index)),
+    try:
+        for rel_path, (file_hash, _) in pending_files.items():
+            cache.files[rel_path] = FileEmbeddingRecord(
+                path=rel_path,
+                sha256=file_hash,
+                chunks=tuple(
+                    sorted(refreshed_records.get(rel_path, []), key=lambda item: item.index)
+                ),
+            )
+
+        for stale_path in set(cache.files) - current_paths:
+            cache.files.pop(stale_path, None)
+
+        cache.save(cache_file)
+        vector_store = VectorStore(cache.files.values())
+        return EmbeddingSyncResult(
+            cache_path=cache_file,
+            vector_store=vector_store,
+            updated_files=tuple(updated_files),
+            reused_files=tuple(reused_files),
+            chunk_count=sum(len(record.chunks) for record in cache.files.values()),
         )
-
-    for stale_path in set(cache.files) - current_paths:
-        cache.files.pop(stale_path, None)
-
-    cache.save(cache_file)
-    vector_store = VectorStore(cache.files.values())
-    return EmbeddingSyncResult(
-        cache_path=cache_file,
-        vector_store=vector_store,
-        updated_files=tuple(updated_files),
-        reused_files=tuple(reused_files),
-        chunk_count=sum(len(record.chunks) for record in cache.files.values()),
-    )
+    finally:
+        if owns_client and hasattr(embedding_client, "aclose"):
+            await embedding_client.aclose()  # type: ignore[union-attr]
 
 
 def build_embedding_sync(

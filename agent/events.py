@@ -54,6 +54,21 @@ class ContextSummaryPayload:
 
 
 @dataclass(frozen=True)
+class ContextSemanticMatchItem:
+    path: str
+    semantic_score: float
+    lexical_score: float
+    blended_score: float
+
+
+@dataclass(frozen=True)
+class ContextSemanticMatchPayload:
+    prompt: str
+    selected_count: int
+    matches: tuple[ContextSemanticMatchItem, ...]
+
+
+@dataclass(frozen=True)
 class RunSummaryPayload:
     summary: str
     change_count: int
