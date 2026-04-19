@@ -23,6 +23,10 @@ class Config:
     api_key: str = "dummy"
     model: str = "local"
 
+    # Embeddings for semantic retrieval / RAG
+    embedding_api_base: str = "http://localhost:8081/v1"
+    embedding_model: str = "nomic-embed-text"
+
     max_context_tokens: int = 16384
     max_response_tokens: int = 4096
     tokenizer_backend: str = "estimate"
@@ -40,6 +44,7 @@ class Config:
             ".venv",
             "venv",
             "env",
+            ".code-orbit",
             "dist",
             "build",
             "*.egg-info",

@@ -2,6 +2,10 @@
 max_context_tokens: 16384
 max_response_tokens: 16384
 
+# Embeddings for semantic retrieval / RAG
+embedding_api_base: 'http://localhost:8081/v1'
+embedding_model: 'nomic-embed-text'
+
 # Profiles: select with --profile / -P
 # 'default_profile' is used when no --profile flag is passed.
 default_profile: 'qwen-coder'
