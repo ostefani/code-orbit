@@ -1,6 +1,6 @@
 # Context window in tokens — match your model's actual context size
 max_context_tokens: 16384
-max_response_tokens: 16384
+max_response_tokens: 4096
 
 # Embeddings for semantic retrieval / RAG
 embedding_api_base: 'http://localhost:8081/v1'
@@ -44,7 +44,9 @@ profiles:
         max_response_tokens: 16384
         tokenizer_backend: tokenizers_json
         tokenizer_model_path: ~/.llamacpp_models/ggufs/gemma-4-26B-A4B-it/tokenizer.json
-        auto_commit: true
+        auto_commit: true,
+        # embedding_api_base: 'http://localhost:8082/v1'
+        # embedding_model: 'local'
 
 # Pause and show diffs before applying changes
 interactive: true

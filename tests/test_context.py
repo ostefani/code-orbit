@@ -74,6 +74,35 @@ def test_context_token_limit(temp_codebase: Path) -> None:
     assert "large.txt" in result.skipped_paths
 
 
+def test_build_context_reports_budget_breakdown_and_zero_budget_warning(
+    temp_codebase: Path,
+) -> None:
+    config = Config(
+        ignore_patterns=[".git", "node_modules"],
+        max_context_tokens=256,
+        max_response_tokens=128,
+    )
+
+    result = asyncio.run(
+        build_context_async(
+            str(temp_codebase),
+            "Update the Python source files",
+            config,
+        )
+    )
+
+    assert result.budget_breakdown is not None
+    assert result.budget_breakdown.context_window_tokens == 256
+    assert result.budget_breakdown.response_reserve_tokens == 128
+    assert result.token_budget == result.budget_breakdown.file_budget_tokens
+    assert result.token_budget == 0
+    assert any(
+        "No file context budget remains" in warning
+        or "leaves no room for file context" in warning
+        for warning in result.token_warnings
+    )
+
+
 def test_build_context_skips_symlinks(temp_codebase: Path, tmp_path_factory) -> None:
     outside_dir = tmp_path_factory.mktemp("outside")
     outside = outside_dir / "outside.txt"

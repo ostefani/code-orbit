@@ -129,6 +129,7 @@ Edit `config.yaml`:
 ```yaml
 api_base: 'http://localhost:8080/v1' # llama.cpp server
 max_context_tokens: 16384 # match your model's context size
+max_response_tokens: 4096 # reserve room for the model's reply
 interactive: true # show diffs, ask before applying
 auto_commit: false # git commit after applying
 ```

@@ -80,6 +80,15 @@ class Config:
             self.ignore_patterns = list(self.ignore_patterns)
         if ".code-orbit" not in self.ignore_patterns:
             self.ignore_patterns.append(".code-orbit")
+        if self.max_context_tokens <= 0:
+            raise ValueError("max_context_tokens must be greater than zero.")
+        if self.max_response_tokens < 0:
+            raise ValueError("max_response_tokens must not be negative.")
+        if self.max_response_tokens >= self.max_context_tokens:
+            raise ValueError(
+                "max_response_tokens must be smaller than max_context_tokens "
+                "so there is room for file context."
+            )
 
     @classmethod
     def load(

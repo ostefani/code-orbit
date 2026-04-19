@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypeVar
 
 from openai import AsyncOpenAI
 from pydantic import (
@@ -143,6 +143,8 @@ class CodeResponseSchema(BaseModel):
 ChangeSchema = CodeChangeSchema
 LLMResponseSchema = CodeResponseSchema
 
+ModelT = TypeVar("ModelT", bound=BaseModel)
+
 
 def format_plan_roadmap(plan: PlanSchema) -> str:
     lines = [f"Plan summary: {plan.summary}"]
@@ -162,9 +164,9 @@ async def _call_structured_llm(
     system_prompt: str,
     user_message: str,
     config: Config,
-    parser: Callable[[str], BaseModel],
+    parser: Callable[[str], ModelT],
     on_chunk: Callable[[str], None] | None = None,
-) -> BaseModel:
+) -> ModelT:
     client = AsyncOpenAI(
         base_url=config.api_base,
         api_key=config.api_key,

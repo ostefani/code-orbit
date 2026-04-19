@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import ast
 import inspect
@@ -9,7 +7,7 @@ import math
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol, Sequence
+from typing import Protocol, Sequence, Self
 
 from .config import Config
 from .constants import LOW_VALUE_DIRS, LOW_VALUE_FILENAMES
@@ -56,15 +54,6 @@ class EmbeddingSearchResult:
     sha256: str
 
 
-@dataclass(frozen=True)
-class EmbeddingSyncResult:
-    cache_path: Path
-    vector_store: "VectorStore"
-    updated_files: tuple[str, ...]
-    reused_files: tuple[str, ...]
-    chunk_count: int
-
-
 class EmbeddingClient(Protocol):
     async def embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]: ...
 
@@ -104,79 +93,6 @@ class OpenAICompatibleEmbeddingClient:
             if inspect.isawaitable(result):
                 await result
         self._client = None
-
-
-@dataclass
-class EmbeddingCache:
-    version: int = 1
-    model: str = ""
-    api_base: str = ""
-    files: dict[str, FileEmbeddingRecord] = field(default_factory=dict)
-
-    @classmethod
-    def load(cls, path: Path) -> "EmbeddingCache":
-        if not path.exists():
-            return cls()
-
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return cls()
-
-        files: dict[str, FileEmbeddingRecord] = {}
-        for rel_path, payload in raw.get("files", {}).items():
-            chunks = tuple(
-                ChunkEmbedding(
-                    index=int(chunk["index"]),
-                    vector=tuple(float(value) for value in chunk["vector"]),
-                    start_line=int(chunk["start_line"]),
-                    end_line=int(chunk["end_line"]),
-                    content_hash=str(chunk["content_hash"]),
-                )
-                for chunk in payload.get("chunks", [])
-            )
-            files[rel_path] = FileEmbeddingRecord(
-                path=rel_path,
-                sha256=str(payload.get("sha256", "")),
-                chunks=chunks,
-            )
-
-        return cls(
-            version=int(raw.get("version", 1)),
-            model=str(raw.get("model", "")),
-            api_base=str(raw.get("api_base", "")),
-            files=files,
-        )
-
-    def save(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "version": self.version,
-            "model": self.model,
-            "api_base": self.api_base,
-            "files": {
-                rel_path: {
-                    "sha256": record.sha256,
-                    "chunks": [
-                        {
-                            "index": chunk.index,
-                            "vector": list(chunk.vector),
-                            "start_line": chunk.start_line,
-                            "end_line": chunk.end_line,
-                            "content_hash": chunk.content_hash,
-                        }
-                        for chunk in record.chunks
-                    ],
-                }
-                for rel_path, record in sorted(self.files.items())
-            },
-        }
-        temp_path = path.with_name(f"{path.name}.tmp")
-        temp_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-        os.replace(temp_path, path)
-
-    def is_compatible(self, config: Config) -> bool:
-        return self.model == config.embedding_model and self.api_base == config.embedding_api_base
 
 
 class VectorStore:
@@ -274,6 +190,90 @@ class VectorStore:
     ) -> list[EmbeddingSearchResult]:
         vector = (await client.embed([text]))[0]
         return self.search(vector, top_k=top_k)
+
+
+@dataclass(frozen=True)
+class EmbeddingSyncResult:
+    cache_path: Path
+    vector_store: VectorStore
+    updated_files: tuple[str, ...]
+    reused_files: tuple[str, ...]
+    chunk_count: int
+
+
+@dataclass
+class EmbeddingCache:
+    version: int = 1
+    model: str = ""
+    api_base: str = ""
+    files: dict[str, FileEmbeddingRecord] = field(default_factory=dict)
+
+    @classmethod
+    def load(cls, path: Path) -> Self:
+        if not path.exists():
+            return cls()
+
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return cls()
+
+        files: dict[str, FileEmbeddingRecord] = {}
+        for rel_path, payload in raw.get("files", {}).items():
+            chunks = tuple(
+                ChunkEmbedding(
+                    index=int(chunk["index"]),
+                    vector=tuple(float(value) for value in chunk["vector"]),
+                    start_line=int(chunk["start_line"]),
+                    end_line=int(chunk["end_line"]),
+                    content_hash=str(chunk["content_hash"]),
+                )
+                for chunk in payload.get("chunks", [])
+            )
+            files[rel_path] = FileEmbeddingRecord(
+                path=rel_path,
+                sha256=str(payload.get("sha256", "")),
+                chunks=chunks,
+            )
+
+        return cls(
+            version=int(raw.get("version", 1)),
+            model=str(raw.get("model", "")),
+            api_base=str(raw.get("api_base", "")),
+            files=files,
+        )
+
+    def save(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "version": self.version,
+            "model": self.model,
+            "api_base": self.api_base,
+            "files": {
+                rel_path: {
+                    "sha256": record.sha256,
+                    "chunks": [
+                        {
+                            "index": chunk.index,
+                            "vector": list(chunk.vector),
+                            "start_line": chunk.start_line,
+                            "end_line": chunk.end_line,
+                            "content_hash": chunk.content_hash,
+                        }
+                        for chunk in record.chunks
+                    ],
+                }
+                for rel_path, record in sorted(self.files.items())
+            },
+        }
+        temp_path = path.with_name(f"{path.name}.tmp")
+        temp_path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
+        )
+        os.replace(temp_path, path)
+
+    def is_compatible(self, config: Config) -> bool:
+        return self.model == config.embedding_model and self.api_base == config.embedding_api_base
 
 
 def default_embedding_cache_path(root: str | Path) -> Path:

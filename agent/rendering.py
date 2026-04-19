@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from pathlib import Path
 
 from rich.console import Console
@@ -47,7 +45,12 @@ class CliEventRenderer:
         ):
             self.console.print(
                 f"\n[dim]Context:[/dim] {event.payload.file_count} files | "
-                f"~{event.payload.used_tokens:,} file tokens"
+                f"~{event.payload.used_tokens:,} file tokens | "
+                f"budget {event.payload.token_budget:,}/"
+                f"{event.payload.context_window_tokens:,} "
+                f"(response reserve {event.payload.response_reserve_tokens:,}, "
+                f"wrapper {event.payload.scaffold_tokens:,}, "
+                f"safety {event.payload.safety_margin_tokens:,})"
             )
             return
 

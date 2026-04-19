@@ -43,14 +43,12 @@ class FileCandidate:
 
 
 @dataclass(frozen=True)
-class ContextBuildResult:
-    entries: tuple[FileEntry, ...]
-    context: str
-    skipped_paths: tuple[str, ...]
-    used_tokens: int
-    token_budget: int
-    token_warnings: tuple[str, ...]
-    semantic_matches: tuple["SemanticMatch", ...] = ()
+class ContextBudgetBreakdown:
+    context_window_tokens: int
+    response_reserve_tokens: int
+    scaffold_tokens: int
+    safety_margin_tokens: int
+    file_budget_tokens: int
 
 
 @dataclass(frozen=True)
@@ -59,6 +57,18 @@ class SemanticMatch:
     semantic_score: float
     lexical_score: float
     blended_score: float
+
+
+@dataclass(frozen=True)
+class ContextBuildResult:
+    entries: tuple[FileEntry, ...]
+    context: str
+    skipped_paths: tuple[str, ...]
+    used_tokens: int
+    token_budget: int
+    token_warnings: tuple[str, ...]
+    semantic_matches: tuple[SemanticMatch, ...] = ()
+    budget_breakdown: ContextBudgetBreakdown | None = None
 
 
 def _is_ignored(path: Path, root: Path, patterns: list[str]) -> bool:
@@ -176,7 +186,9 @@ def _render_file_block(path: str, content: str) -> str:
     return f'<file path="{path}">\n{content}\n</file>\n'
 
 
-def _compute_context_budget(prompt: str, config: Config) -> tuple[int, tuple[str, ...]]:
+def _compute_context_budget(
+    prompt: str, config: Config
+) -> tuple[ContextBudgetBreakdown, tuple[str, ...]]:
     """
     Compute how many tokens may be spent on file blocks only.
 
@@ -191,7 +203,7 @@ def _compute_context_budget(prompt: str, config: Config) -> tuple[int, tuple[str
         f"{SYSTEM_PROMPT}\n" f"<codebase>\n</codebase>\n" f"<task>\n{prompt}\n</task>"
     )
     scaffold_result = count_tokens(scaffold, config)
-    base_overhead = scaffold_result.count
+    scaffold_tokens = scaffold_result.count
 
     if config.tokenizer_backend == "estimate":
         # Estimate backend is intentionally conservative.
@@ -200,13 +212,39 @@ def _compute_context_budget(prompt: str, config: Config) -> tuple[int, tuple[str
         # Exact tokenizers need only a small buffer for drift.
         safety_margin = 64
 
-    budget = (
+    file_budget = (
         config.max_context_tokens
         - config.max_response_tokens
-        - base_overhead
+        - scaffold_tokens
         - safety_margin
     )
-    return max(0, budget), scaffold_result.warnings
+    available_file_tokens = max(0, file_budget)
+
+    warnings = list(scaffold_result.warnings)
+    if available_file_tokens == 0:
+        if config.max_response_tokens >= config.max_context_tokens:
+            warnings.append(
+                "max_response_tokens leaves no room for file context. "
+                "Lower max_response_tokens or raise max_context_tokens."
+            )
+        else:
+            warnings.append(
+                "No file context budget remains after reserving "
+                f"{config.max_response_tokens} response tokens, "
+                f"{scaffold_tokens} scaffold tokens, and {safety_margin} "
+                "safety tokens."
+            )
+
+    return (
+        ContextBudgetBreakdown(
+            context_window_tokens=config.max_context_tokens,
+            response_reserve_tokens=config.max_response_tokens,
+            scaffold_tokens=scaffold_tokens,
+            safety_margin_tokens=safety_margin,
+            file_budget_tokens=available_file_tokens,
+        ),
+        tuple(warnings),
+    )
 
 
 async def build_context_async(
@@ -309,7 +347,8 @@ async def build_context_async(
         key=lambda item: (-item[0], item[1].size_bytes, item[1].path)
     )
 
-    token_budget, initial_warnings = _compute_context_budget(prompt, config)
+    budget_breakdown, initial_warnings = _compute_context_budget(prompt, config)
+    token_budget = budget_breakdown.file_budget_tokens
     used_tokens = 0
     included: list[FileEntry] = []
     skipped: list[str] = []
@@ -389,6 +428,7 @@ async def build_context_async(
         token_budget=token_budget,
         token_warnings=deduped_warnings,
         semantic_matches=semantic_matches,
+        budget_breakdown=budget_breakdown,
     )
 
 

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import copy
 import json
 import logging
@@ -51,6 +49,10 @@ class ContextSummaryPayload:
     file_count: int
     used_tokens: int
     token_budget: int
+    context_window_tokens: int = 0
+    response_reserve_tokens: int = 0
+    scaffold_tokens: int = 0
+    safety_margin_tokens: int = 0
 
 
 @dataclass(frozen=True)
