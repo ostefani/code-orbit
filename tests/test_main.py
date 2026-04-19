@@ -1,7 +1,16 @@
+import json
+from pathlib import Path
+
 from agent.config import Config
 from agent.events import AgentEvent, EventBus, RunProposalReadyPayload
 from agent.llm import CodeChangeSchema, CodeResponseSchema, PlanSchema, PlanTaskSchema
-from main import build_working_context, open_plan_in_editor, validate_llm_result
+from main import (
+    build_working_context,
+    load_history,
+    open_plan_in_editor,
+    save_history,
+    validate_llm_result,
+)
 
 
 def test_config_rejects_impossible_context_budget() -> None:
@@ -218,6 +227,28 @@ def test_open_plan_in_editor_parses_modified_plan(monkeypatch, tmp_path) -> None
 
     assert approved.summary == "Edited plan"
     assert approved.tasks[0].files == ["src/app.py", "agent/llm.py"]
+
+
+def test_history_is_saved_under_code_orbit(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    save_history("Add logging")
+
+    history_path = tmp_path / ".code-orbit" / "history.json"
+    assert history_path.exists()
+    assert json.loads(history_path.read_text(encoding="utf-8")) == ["Add logging"]
+
+
+def test_history_loads_legacy_file_on_first_run(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    legacy_path = tmp_path / ".code-orbit-history"
+    legacy_path.write_text(
+        json.dumps(["Legacy prompt", "Older prompt"]),
+        encoding="utf-8",
+    )
+
+    assert load_history() == ["Legacy prompt", "Older prompt"]
 
 
 def test_build_working_context_appends_applied_changes() -> None:

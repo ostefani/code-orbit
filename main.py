@@ -56,7 +56,9 @@ from agent.patcher import apply_changes, git_commit, preview_changes
 from agent.rendering import CliEventRenderer
 
 console = Console()
-HISTORY_FILE = ".code-orbit-history"
+HISTORY_DIR = Path(".code-orbit")
+HISTORY_FILE = HISTORY_DIR / "history.json"
+LEGACY_HISTORY_FILE = Path(".code-orbit-history")
 ALLOWED_ACTIONS = {"create", "update", "delete"}
 MAX_REPLAN_ATTEMPTS = 3
 
@@ -149,7 +151,10 @@ def parse_args() -> argparse.Namespace:
 
 
 def load_history() -> list[str]:
-    path = Path(HISTORY_FILE)
+    path = HISTORY_FILE
+    if not path.exists() and LEGACY_HISTORY_FILE.exists():
+        path = LEGACY_HISTORY_FILE
+
     if not path.exists():
         return []
     try:
@@ -164,7 +169,8 @@ def save_history(prompt: str) -> None:
         history.remove(prompt)
     history.insert(0, prompt)
     try:
-        Path(HISTORY_FILE).write_text(json.dumps(history[:20], indent=2))
+        HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        HISTORY_FILE.write_text(json.dumps(history[:20], indent=2))
     except OSError:
         pass
 
