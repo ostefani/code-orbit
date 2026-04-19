@@ -66,6 +66,26 @@ def test_validate_llm_result_accepts_valid_changes() -> None:
     ]
 
 
+def test_validate_llm_result_rejects_missing_content() -> None:
+    result = LLMResponseSchema.model_construct(
+        summary="Update files",
+        changes=[
+            ChangeSchema.model_construct(
+                path="src/app.py",
+                action="update",
+                content=None,
+            )
+        ],
+    )
+
+    try:
+        validate_llm_result(result, Config())
+    except ValueError as exc:
+        assert "requires content" in str(exc)
+    else:
+        raise AssertionError("Expected missing content to be rejected")
+
+
 def test_run_proposal_ready_event_can_be_published() -> None:
     bus = EventBus()
     events = []
@@ -100,6 +120,32 @@ def test_change_schema_rejects_content_for_delete() -> None:
         assert "must not include 'content'" in str(exc)
     else:
         raise AssertionError("Expected content to be rejected for delete actions")
+
+
+def test_change_schema_rejects_path_traversal() -> None:
+    try:
+        ChangeSchema(
+            path="../escape.txt",
+            action="update",
+            content="print('escape')",
+        )
+    except Exception as exc:
+        assert "parent-directory traversal" in str(exc)
+    else:
+        raise AssertionError("Expected traversal paths to be rejected")
+
+
+def test_change_schema_rejects_absolute_path() -> None:
+    try:
+        ChangeSchema(
+            path="/etc/passwd",
+            action="update",
+            content="print('owned')",
+        )
+    except Exception as exc:
+        assert "relative path" in str(exc)
+    else:
+        raise AssertionError("Expected absolute paths to be rejected")
 
 
 def test_plan_task_schema_requires_relative_files() -> None:

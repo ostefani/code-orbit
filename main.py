@@ -196,17 +196,13 @@ def validate_llm_result(
         path = change.path
         action = change.action
 
+        # Defense-in-depth: Pydantic rejects empty paths during normal parsing,
+        # but validate_llm_result can still see model_construct'd inputs in tests
+        # or partially validated callers.
         if not path.strip():
             raise ValueError(f"Change #{index} is missing a valid 'path' string.")
-        if Path(path).is_absolute():
-            raise ValueError(f"Change #{index} uses an absolute path: {path!r}")
 
         normalized_path = path.strip()
-        normalized_parts = Path(normalized_path).parts
-        if any(part == ".." for part in normalized_parts):
-            raise ValueError(
-                f"Change #{index} uses parent-directory traversal: {normalized_path!r}"
-            )
         if normalized_path in seen_paths:
             raise ValueError(f"Duplicate change path detected: {normalized_path!r}")
         seen_paths.add(normalized_path)
@@ -226,8 +222,11 @@ def validate_llm_result(
             validated_changes.append({"path": normalized_path, "action": action})
             continue
 
+        # Defense-in-depth: the schema validator should already enforce this for
+        # create/update actions, but keep the guard for bypassed validation.
         content = change.content
-        assert content is not None
+        if content is None:
+            raise ValueError(f"Change #{index} action={action!r} requires content.")
         validated_changes.append(
             {
                 "path": normalized_path,
