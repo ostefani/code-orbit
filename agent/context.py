@@ -42,8 +42,6 @@ class ContextBuildResult:
 
 def _is_ignored(path: Path, root: Path, patterns: list[str]) -> bool:
     rel = str(path.relative_to(root))
-    if path.name == ".code-orbit" or ".code-orbit" in path.parts:
-        return True
     for pattern in patterns:
         if fnmatch.fnmatch(path.name, pattern):
             return True

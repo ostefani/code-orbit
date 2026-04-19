@@ -16,7 +16,7 @@ class FakeEmbeddingClient:
     def __init__(self) -> None:
         self.requests: list[list[str]] = []
 
-    def embed(self, texts):
+    async def embed(self, texts):
         batch = list(texts)
         self.requests.append(batch)
         vectors: list[tuple[float, float]] = []

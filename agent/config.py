@@ -26,6 +26,8 @@ class Config:
     # Embeddings for semantic retrieval / RAG
     embedding_api_base: str = "http://localhost:8081/v1"
     embedding_model: str = "nomic-embed-text"
+    embedding_batch_size: int = 16
+    embedding_max_concurrency: int = 4
 
     max_context_tokens: int = 16384
     max_response_tokens: int = 4096
@@ -72,6 +74,12 @@ class Config:
     auto_commit: bool = False
 
     allow_delete: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.ignore_patterns, list):
+            self.ignore_patterns = list(self.ignore_patterns)
+        if ".code-orbit" not in self.ignore_patterns:
+            self.ignore_patterns.append(".code-orbit")
 
     @classmethod
     def load(

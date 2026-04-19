@@ -40,3 +40,5 @@ def test_config_defaults_include_embedding_settings() -> None:
 
     assert config.embedding_model == "nomic-embed-text"
     assert config.embedding_api_base.startswith("http://localhost:")
+    assert config.embedding_batch_size == 16
+    assert config.embedding_max_concurrency == 4

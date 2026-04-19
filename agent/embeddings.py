@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import ast
 import hashlib
 import json
 import math
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, Sequence
@@ -63,7 +65,7 @@ class EmbeddingSyncResult:
 
 
 class EmbeddingClient(Protocol):
-    def embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]: ...
+    async def embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]: ...
 
 
 class OpenAICompatibleEmbeddingClient:
@@ -71,17 +73,23 @@ class OpenAICompatibleEmbeddingClient:
         self.api_base = api_base.rstrip("/")
         self.api_key = api_key
         self.model = model
+        self._client: object | None = None
 
-    def embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
-        try:
-            from openai import OpenAI
-        except ImportError as exc:  # pragma: no cover - dependency issue
-            raise RuntimeError(
-                "The 'openai' package is required for embedding generation."
-            ) from exc
+    def _get_client(self) -> object:
+        if self._client is None:
+            try:
+                from openai import AsyncOpenAI
+            except ImportError as exc:  # pragma: no cover - dependency issue
+                raise RuntimeError(
+                    "The 'openai' package is required for embedding generation."
+                ) from exc
 
-        client = OpenAI(base_url=self.api_base, api_key=self.api_key)
-        response = client.embeddings.create(model=self.model, input=list(texts))
+            self._client = AsyncOpenAI(base_url=self.api_base, api_key=self.api_key)
+        return self._client
+
+    async def embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
+        client = self._get_client()
+        response = await client.embeddings.create(model=self.model, input=list(texts))
         return [tuple(item.embedding) for item in response.data]
 
 
@@ -150,7 +158,9 @@ class EmbeddingCache:
                 for rel_path, record in sorted(self.files.items())
             },
         }
-        path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        temp_path = path.with_name(f"{path.name}.tmp")
+        temp_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        os.replace(temp_path, path)
 
     def is_compatible(self, config: Config) -> bool:
         return self.model == config.embedding_model and self.api_base == config.embedding_api_base
@@ -191,13 +201,13 @@ class VectorStore:
         results.sort(key=lambda item: (-item.score, item.path, item.chunk_index))
         return results[:top_k]
 
-    def search_text(
+    async def search_text(
         self,
         text: str,
         client: EmbeddingClient,
         top_k: int = 10,
     ) -> list[EmbeddingSearchResult]:
-        vector = client.embed([text])[0]
+        vector = (await client.embed([text]))[0]
         return self.search(vector, top_k=top_k)
 
 
@@ -214,8 +224,6 @@ def _is_ignored(path: Path, root: Path, patterns: Sequence[str]) -> bool:
     import fnmatch
 
     rel = str(path.relative_to(root))
-    if path.name == ".code-orbit" or ".code-orbit" in path.parts:
-        return True
     if path.name in LOW_VALUE_FILENAMES:
         return True
     if any(part in LOW_VALUE_DIRS for part in path.parts):
@@ -429,13 +437,13 @@ def chunk_file(path: Path, content: str, max_chunk_chars: int = DEFAULT_CHUNK_CH
     return _chunk_by_lines(path, content, max_chunk_chars)
 
 
-def build_embedding_sync(
+async def build_embedding_index(
     root: str | Path,
     config: Config,
     *,
     cache_path: Path | None = None,
     client: EmbeddingClient | None = None,
-    batch_size: int = 16,
+    batch_size: int | None = None,
 ) -> EmbeddingSyncResult:
     root_path = Path(root).resolve()
     cache_file = cache_path or default_embedding_cache_path(root_path)
@@ -448,6 +456,8 @@ def build_embedding_sync(
         api_key=config.api_key,
         model=config.embedding_model,
     )
+    effective_batch_size = max(1, batch_size or config.embedding_batch_size)
+    max_concurrency = max(1, config.embedding_max_concurrency)
 
     updated_files: list[str] = []
     reused_files: list[str] = []
@@ -478,14 +488,32 @@ def build_embedding_sync(
 
     refreshed_records: dict[str, list[ChunkEmbedding]] = {path: [] for path in pending_files}
 
-    for start in range(0, len(pending_chunks), batch_size):
-        batch = pending_chunks[start : start + batch_size]
-        vectors = embedding_client.embed([chunk.content for _, _, chunk in batch])
+    async def embed_batch(batch: list[tuple[str, str, CodeChunk]]) -> tuple[
+        list[tuple[str, str, CodeChunk]],
+        Sequence[Sequence[float]],
+    ]:
+        vectors = await embedding_client.embed([chunk.content for _, _, chunk in batch])
         if len(vectors) != len(batch):
             raise RuntimeError(
                 "Embedding client returned a mismatched number of vectors for a batch."
             )
+        return batch, vectors
 
+    semaphore = asyncio.Semaphore(max_concurrency)
+
+    async def guarded_embed_batch(
+        batch: list[tuple[str, str, CodeChunk]]
+    ) -> tuple[list[tuple[str, str, CodeChunk]], Sequence[Sequence[float]]]:
+        async with semaphore:
+            return await embed_batch(batch)
+
+    batch_tasks: list[asyncio.Task[tuple[list[tuple[str, str, CodeChunk]], Sequence[Sequence[float]]]]] = []
+    for start in range(0, len(pending_chunks), effective_batch_size):
+        batch = pending_chunks[start : start + effective_batch_size]
+        batch_tasks.append(asyncio.create_task(guarded_embed_batch(batch)))
+
+    batch_results = await asyncio.gather(*batch_tasks) if batch_tasks else []
+    for batch, vectors in batch_results:
         for (rel_path, file_hash, chunk), vector in zip(batch, vectors, strict=True):
             refreshed_records.setdefault(rel_path, []).append(
                 ChunkEmbedding(
@@ -518,6 +546,25 @@ def build_embedding_sync(
     )
 
 
+def build_embedding_sync(
+    root: str | Path,
+    config: Config,
+    *,
+    cache_path: Path | None = None,
+    client: EmbeddingClient | None = None,
+    batch_size: int | None = None,
+) -> EmbeddingSyncResult:
+    return asyncio.run(
+        build_embedding_index(
+            root,
+            config,
+            cache_path=cache_path,
+            client=client,
+            batch_size=batch_size,
+        )
+    )
+
+
 def _cosine_similarity(left: Sequence[float], right: Sequence[float]) -> float:
     if len(left) != len(right):
         return 0.0
@@ -530,6 +577,7 @@ def _cosine_similarity(left: Sequence[float], right: Sequence[float]) -> float:
         left_norm += lhs * lhs
         right_norm += rhs * rhs
 
-    if left_norm == 0.0 or right_norm == 0.0:
+    denom = math.sqrt(left_norm) * math.sqrt(right_norm)
+    if denom < 1e-10:
         return 0.0
-    return dot / (math.sqrt(left_norm) * math.sqrt(right_norm))
+    return dot / denom
