@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import json
 import logging
 from contextlib import redirect_stderr
@@ -127,7 +128,7 @@ def test_logging_formatter_preserves_utf8() -> None:
     assert "✅ Archivo actualizado" in records[0]
 
 
-def test_event_bus_deep_copies_typed_payload() -> None:
+def test_event_bus_keeps_frozen_payload_identity() -> None:
     bus = EventBus()
     events = []
     bus.subscribe(events.append)
@@ -138,7 +139,27 @@ def test_event_bus_deep_copies_typed_payload() -> None:
     published = bus.publish(event)
 
     assert published.payload == payload
+    assert published.payload is payload
+
+
+def test_event_bus_deep_copies_mutable_payload() -> None:
+    @dataclass
+    class MutablePayload:
+        values: list[int]
+
+    bus = EventBus()
+    events = []
+    bus.subscribe(events.append)
+
+    payload = MutablePayload(values=[1, 2, 3])
+    event = AgentEvent(name="demo.mutable", payload=payload)
+
+    published = bus.publish(event)
+
+    assert published.payload == payload
     assert published.payload is not payload
+    payload.values.append(4)
+    assert published.payload.values == [1, 2, 3]
 
 
 def test_build_event_logger_uses_rotating_file_handler(tmp_path: Path) -> None:
