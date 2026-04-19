@@ -281,13 +281,9 @@ def default_embedding_cache_path(root: str | Path) -> Path:
     return root_path / DEFAULT_CACHE_DIR / DEFAULT_CACHE_FILENAME
 
 
-def hash_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def _safe_read_text(path: Path) -> str | None:
+def _read_file_bytes(path: Path) -> bytes | None:
     try:
-        return path.read_text(encoding="utf-8", errors="ignore")
+        return path.read_bytes()
     except (OSError, PermissionError):
         return None
 
@@ -507,15 +503,17 @@ async def build_embedding_index(
     for path in iter_code_files(root_path, config):
         rel_path = str(path.relative_to(root_path))
         current_paths.add(rel_path)
-        file_hash = hash_file(path)
+        data = _read_file_bytes(path)
+        if data is None:
+            continue
+
+        file_hash = hashlib.sha256(data).hexdigest()
         cached_record = cache.files.get(rel_path)
         if cached_record is not None and cached_record.sha256 == file_hash:
             reused_files.append(rel_path)
             continue
 
-        content = _safe_read_text(path)
-        if content is None:
-            continue
+        content = data.decode("utf-8", errors="ignore")
 
         chunks = chunk_file(path, content)
         if not chunks:

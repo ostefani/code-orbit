@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 
 from agent.config import Config
@@ -8,7 +9,7 @@ from agent.embeddings import (
     VectorStore,
     build_embedding_sync,
     default_embedding_cache_path,
-    hash_file,
+    iter_code_files,
 )
 
 
@@ -66,9 +67,10 @@ def test_build_embedding_sync_creates_cache_and_reuses_files(tmp_path: Path) -> 
     assert result.chunk_count == 2
 
     cache = EmbeddingCache.load(result.cache_path)
-    assert cache.files["src/auth/middleware.py"].sha256 == hash_file(
-        tmp_path / "src" / "auth" / "middleware.py"
-    )
+    expected_hash = hashlib.sha256(
+        (tmp_path / "src" / "auth" / "middleware.py").read_bytes()
+    ).hexdigest()
+    assert cache.files["src/auth/middleware.py"].sha256 == expected_hash
 
     second_client = FakeEmbeddingClient()
     second = build_embedding_sync(
@@ -99,6 +101,32 @@ def test_build_embedding_sync_creates_cache_and_reuses_files(tmp_path: Path) -> 
     assert third.updated_files == ()
     assert third.reused_files == ("src/auth/middleware.py",)
     assert "src/tests.py" not in EmbeddingCache.load(third.cache_path).files
+
+
+def test_build_embedding_sync_reads_each_file_once(tmp_path: Path, monkeypatch) -> None:
+    _write_codebase(tmp_path)
+    config = Config(ignore_patterns=[".git", "node_modules"])
+    client = FakeEmbeddingClient()
+    expected_files = len(iter_code_files(tmp_path, config))
+
+    original_read_bytes = Path.read_bytes
+    calls = {"count": 0}
+
+    def counting_read_bytes(self: Path):
+        calls["count"] += 1
+        return original_read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", counting_read_bytes)
+
+    build_embedding_sync(
+        tmp_path,
+        config,
+        client=client,
+        cache_path=default_embedding_cache_path(tmp_path),
+        batch_size=2,
+    )
+
+    assert calls["count"] == expected_files
 
 
 def test_vector_store_ranks_closest_chunk() -> None:
