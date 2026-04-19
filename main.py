@@ -14,6 +14,8 @@ import asyncio
 import subprocess
 import sys
 import tempfile
+from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 
 from rich.console import Console
@@ -24,12 +26,13 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich import print as rprint
 
 from agent.config import Config
-from agent.context import build_context, get_file_tree
+from agent.context import ContextBuildResult, build_context, get_file_tree
 from agent.llm import (
     LLMResponseSchema,
     PlanSchema,
     call_architect,
     call_coder_for_task,
+    format_plan_roadmap,
 )
 from agent.events import (
     AgentEvent,
@@ -53,6 +56,37 @@ from agent.rendering import CliEventRenderer
 console = Console()
 HISTORY_FILE = ".code-orbit-history"
 ALLOWED_ACTIONS = {"create", "update", "delete"}
+MAX_REPLAN_ATTEMPTS = 3
+
+
+class WorkflowState(str, Enum):
+    BUILDING_CONTEXT = "building_context"
+    PLANNING = "planning"
+    EDITING_PLAN = "editing_plan"
+    EXECUTING = "executing"
+    REVIEWING_DIFF = "reviewing_diff"
+    APPLYING = "applying"
+    COMMITTING = "committing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+@dataclass
+class WorkflowRuntime:
+    target_dir: str
+    prompt: str
+    config: Config
+    context_result: ContextBuildResult | None = None
+    plan_path: Path | None = None
+    architect_plan: PlanSchema | None = None
+    approved_plan: PlanSchema | None = None
+    all_changes: list[dict[str, str]] = field(default_factory=list)
+    task_summaries: list[str] = field(default_factory=list)
+    working_context: str = ""
+    execution_feedback: str | None = None
+    replan_attempts: int = 0
+    final_summary: str = ""
+    affected_files: list[str] = field(default_factory=list)
 
 
 def parse_args() -> argparse.Namespace:
@@ -262,6 +296,26 @@ def build_working_context(base_context: str, changes: list[dict[str, str]]) -> s
     return f"{base_context}\n\n{applied_changes_context}"
 
 
+def build_architect_prompt(prompt: str, execution_feedback: str | None = None) -> str:
+    if not execution_feedback:
+        return prompt
+    return (
+        f"{prompt}\n\n<execution_feedback>\n"
+        f"{execution_feedback}\n</execution_feedback>"
+    )
+
+
+def format_execution_feedback(
+    error: str,
+    partial_changes: list[dict[str, str]],
+) -> str:
+    parts = [f"Execution failed with error: {error}"]
+    if partial_changes:
+        parts.append("Partial task outputs so far:")
+        parts.append(render_applied_changes_context(partial_changes))
+    return "\n".join(parts)
+
+
 def format_plan_for_display(plan: PlanSchema) -> str:
     lines = [f"[bold]{plan.summary}[/bold]"]
     if not plan.tasks:
@@ -279,7 +333,371 @@ def format_plan_for_display(plan: PlanSchema) -> str:
     return "\n".join(lines)
 
 
-async def main() -> None:
+def reset_execution_state(runtime: WorkflowRuntime) -> None:
+    runtime.all_changes.clear()
+    runtime.task_summaries.clear()
+    runtime.final_summary = ""
+    if runtime.context_result is not None:
+        runtime.working_context = runtime.context_result.context
+
+
+def run_build_context_stage(
+    runtime: WorkflowRuntime, event_bus: EventBus
+) -> WorkflowState:
+    event_bus.publish(AgentEvent(
+        name="state.changed",
+        state=WorkflowState.BUILDING_CONTEXT.value,
+        message="Building context.",
+        payload=StateChangedPayload(),
+    ))
+    with console.status("[bold green]Analyzing codebase..."):
+        runtime.context_result = build_context(
+            runtime.target_dir, runtime.prompt, runtime.config
+        )
+    runtime.working_context = runtime.context_result.context
+
+    for warning in runtime.context_result.token_warnings:
+        event_bus.publish(AgentEvent(
+            name="context.warning",
+            level="warning",
+            state=WorkflowState.BUILDING_CONTEXT.value,
+            message=warning,
+            payload=ContextWarningPayload(warning=warning),
+        ))
+
+    if runtime.context_result.skipped_paths:
+        event_bus.publish(AgentEvent(
+            name="context.skipped",
+            level="warning",
+            state=WorkflowState.BUILDING_CONTEXT.value,
+            payload=ContextSkippedPayload(
+                skipped_count=len(runtime.context_result.skipped_paths),
+                paths=tuple(runtime.context_result.skipped_paths),
+            ),
+        ))
+
+    event_bus.publish(AgentEvent(
+        name="context.summary",
+        state=WorkflowState.BUILDING_CONTEXT.value,
+        payload=ContextSummaryPayload(
+            file_count=len(runtime.context_result.entries),
+            used_tokens=runtime.context_result.used_tokens,
+            token_budget=runtime.context_result.token_budget,
+        ),
+    ))
+    return WorkflowState.PLANNING
+
+
+async def run_planning_stage(
+    runtime: WorkflowRuntime, event_bus: EventBus
+) -> WorkflowState:
+    assert runtime.context_result is not None
+
+    event_bus.publish(AgentEvent(
+        name="state.changed",
+        state=WorkflowState.PLANNING.value,
+        message="Drafting implementation plan.",
+        payload=StateChangedPayload(),
+    ))
+    prompt = build_architect_prompt(runtime.prompt, runtime.execution_feedback)
+    try:
+        progress = Progress(
+            SpinnerColumn(style="bold magenta"),
+            TextColumn("{task.description}"),
+            transient=True,
+            console=console,
+        )
+        task_id = progress.add_task("Architect is streaming response...", total=None)
+        chunk_count = 0
+
+        def on_plan_chunk(_chunk: str) -> None:
+            nonlocal chunk_count
+            chunk_count += 1
+            progress.update(
+                task_id,
+                description=f"Architect is streaming response... ({chunk_count} chunks)",
+            )
+
+        with Live(progress, console=console, refresh_per_second=12):
+            runtime.architect_plan = await call_architect(
+                prompt,
+                runtime.context_result.context,
+                runtime.config,
+                on_chunk=on_plan_chunk,
+            )
+    except Exception as e:
+        event_bus.publish(AgentEvent(
+            name="run.failed",
+            level="error",
+            state=WorkflowState.PLANNING.value,
+            message=str(e),
+            payload=EmptyPayload(),
+        ))
+        raise
+
+    if runtime.plan_path is None:
+        runtime.plan_path = create_plan_draft_path()
+    write_plan_draft(runtime.plan_path, runtime.architect_plan)
+    event_bus.publish(AgentEvent(
+        name="plan.ready",
+        state="reviewing_plan",
+        message="Implementation plan ready.",
+        payload=PlanReadyPayload(
+            summary=runtime.architect_plan.summary,
+            task_count=len(runtime.architect_plan.tasks),
+            draft_path=str(runtime.plan_path),
+        ),
+    ))
+    rprint(
+        Panel.fit(
+            format_plan_for_display(runtime.architect_plan),
+            title="🧭 plan",
+            border_style="cyan",
+        )
+    )
+    reset_execution_state(runtime)
+    runtime.execution_feedback = None
+    if not runtime.architect_plan.tasks:
+        return WorkflowState.COMPLETED
+    return WorkflowState.EDITING_PLAN
+
+
+def run_editing_plan_stage(
+    runtime: WorkflowRuntime, event_bus: EventBus
+) -> WorkflowState:
+    assert runtime.plan_path is not None
+    assert runtime.architect_plan is not None
+
+    event_bus.publish(AgentEvent(
+        name="state.changed",
+        state=WorkflowState.EDITING_PLAN.value,
+        message="Opening plan editor.",
+        payload=StateChangedPayload(),
+    ))
+    try:
+        runtime.approved_plan = open_plan_in_editor(runtime.plan_path)
+    except Exception as exc:
+        event_bus.publish(AgentEvent(
+            name="run.failed",
+            level="error",
+            state=WorkflowState.EDITING_PLAN.value,
+            message=str(exc),
+            payload=EmptyPayload(),
+        ))
+        raise
+    return WorkflowState.EXECUTING
+
+
+async def run_execution_stage(
+    runtime: WorkflowRuntime, event_bus: EventBus
+) -> WorkflowState:
+    assert runtime.context_result is not None
+    assert runtime.approved_plan is not None
+
+    event_bus.publish(AgentEvent(
+        name="state.changed",
+        state=WorkflowState.EXECUTING.value,
+        message="Generating file replacements.",
+        payload=StateChangedPayload(),
+    ))
+
+    runtime.all_changes = []
+    runtime.task_summaries = []
+    runtime.working_context = runtime.context_result.context
+
+    for index, task in enumerate(runtime.approved_plan.tasks, 1):
+        event_bus.publish(AgentEvent(
+            name="state.changed",
+            state=WorkflowState.EXECUTING.value,
+            message=(
+                f"Generating file replacements for task {index}/"
+                f"{len(runtime.approved_plan.tasks)}."
+            ),
+            payload=StateChangedPayload(),
+        ))
+        try:
+            progress = Progress(
+                SpinnerColumn(style="bold magenta"),
+                TextColumn("{task.description}"),
+                transient=True,
+                console=console,
+            )
+            task_id = progress.add_task(
+                f"Coder is streaming task {index}/{len(runtime.approved_plan.tasks)}...",
+                total=None,
+            )
+            chunk_count = 0
+
+            def on_chunk(_chunk: str) -> None:
+                nonlocal chunk_count
+                chunk_count += 1
+                progress.update(
+                    task_id,
+                    description=(
+                        f"Coder is streaming task {index}/"
+                        f"{len(runtime.approved_plan.tasks)}... ({chunk_count} chunks)"
+                    ),
+                )
+
+            with Live(progress, console=console, refresh_per_second=12):
+                result = await call_coder_for_task(
+                    runtime.approved_plan,
+                    task,
+                    runtime.working_context,
+                    runtime.config,
+                    on_chunk=on_chunk,
+                )
+        except Exception as exc:
+            runtime.execution_feedback = format_execution_feedback(
+                str(exc),
+                runtime.all_changes,
+            )
+            runtime.replan_attempts += 1
+            reset_execution_state(runtime)
+            event_bus.publish(AgentEvent(
+                name="run.failed",
+                level="error",
+                state=WorkflowState.EXECUTING.value,
+                message=str(exc),
+                payload=EmptyPayload(),
+            ))
+            return (
+                WorkflowState.PLANNING
+                if runtime.replan_attempts <= MAX_REPLAN_ATTEMPTS
+                else WorkflowState.FAILED
+            )
+
+        try:
+            summary, changes = validate_llm_result(result, runtime.config)
+        except ValueError as exc:
+            runtime.execution_feedback = format_execution_feedback(
+                str(exc),
+                runtime.all_changes,
+            )
+            runtime.replan_attempts += 1
+            reset_execution_state(runtime)
+            event_bus.publish(AgentEvent(
+                name="run.failed",
+                level="error",
+                state=WorkflowState.EXECUTING.value,
+                message=str(exc),
+                payload=EmptyPayload(),
+            ))
+            return (
+                WorkflowState.PLANNING
+                if runtime.replan_attempts <= MAX_REPLAN_ATTEMPTS
+                else WorkflowState.FAILED
+            )
+
+        if summary:
+            runtime.task_summaries.append(summary)
+        runtime.all_changes.extend(changes)
+        runtime.working_context = build_working_context(
+            runtime.context_result.context,
+            runtime.all_changes,
+        )
+
+        if changes:
+            rprint(
+                f"[green]✓[/green] Task {index}/{len(runtime.approved_plan.tasks)}: "
+                f"{summary} ({len(changes)} file(s))"
+            )
+        else:
+            rprint(
+                f"[yellow]⚠[/yellow] Task {index}/{len(runtime.approved_plan.tasks)}: "
+                f"No changes required for '{task.goal}'"
+            )
+
+    if not runtime.all_changes:
+        event_bus.publish(AgentEvent(
+            name="run.no_changes",
+            state=WorkflowState.COMPLETED.value,
+            message="No changes needed.",
+            payload=EmptyPayload(),
+        ))
+        return WorkflowState.COMPLETED
+
+    runtime.final_summary = runtime.approved_plan.summary
+    if len(runtime.task_summaries) == 1:
+        runtime.final_summary = runtime.task_summaries[0]
+
+    event_bus.emit(
+        "run.proposal_ready",
+        RunProposalReadyPayload(
+            summary=runtime.final_summary,
+            change_count=len(runtime.all_changes),
+        ),
+        state="validated",
+        message="Model response validated.",
+    )
+    return WorkflowState.REVIEWING_DIFF
+
+
+def run_review_diff_stage(
+    runtime: WorkflowRuntime, event_bus: EventBus
+) -> WorkflowState:
+    assert runtime.approved_plan is not None
+
+    event_bus.publish(AgentEvent(
+        name="state.changed",
+        state=WorkflowState.REVIEWING_DIFF.value,
+        message="Previewing proposed changes.",
+        payload=StateChangedPayload(),
+    ))
+    preview_changes(runtime.target_dir, runtime.all_changes, event_bus=event_bus)
+
+    if runtime.config.interactive:
+        event_bus.publish(AgentEvent(
+            name="state.changed",
+            state="waiting_for_user",
+            message="Waiting for user confirmation.",
+            payload=StateChangedPayload(),
+        ))
+        print()
+        if not Confirm.ask("[bold yellow]Apply these changes?[/bold yellow]"):
+            reset_execution_state(runtime)
+            return WorkflowState.EDITING_PLAN
+
+    return WorkflowState.APPLYING
+
+
+def run_applying_stage(
+    runtime: WorkflowRuntime, event_bus: EventBus
+) -> WorkflowState:
+    event_bus.publish(AgentEvent(
+        name="state.changed",
+        state=WorkflowState.APPLYING.value,
+        message="Applying changes.",
+        payload=StateChangedPayload(),
+    ))
+    rprint("\n[bold green]📝 Applying changes...[/bold green]")
+    affected = apply_changes(runtime.target_dir, runtime.all_changes, event_bus=event_bus)
+    runtime.final_summary = runtime.final_summary or runtime.approved_plan.summary
+    runtime.affected_files = affected
+    return WorkflowState.COMMITTING if runtime.config.auto_commit and affected else WorkflowState.COMPLETED
+
+
+def run_committing_stage(
+    runtime: WorkflowRuntime, event_bus: EventBus
+) -> WorkflowState:
+    affected = runtime.affected_files
+    if affected:
+        event_bus.publish(AgentEvent(
+            name="state.changed",
+            state=WorkflowState.COMMITTING.value,
+            message="Creating git commit.",
+            payload=StateChangedPayload(),
+        ))
+        git_commit(
+            runtime.target_dir,
+            f"{runtime.final_summary}\n\n{format_plan_roadmap(runtime.approved_plan)}",
+            affected,
+            event_bus=event_bus,
+        )
+    return WorkflowState.COMPLETED
+
+
+async def run_workflow() -> None:
     event_bus = EventBus()
     event_bus.subscribe(LoggingEventSubscriber(build_event_logger()))
     event_bus.subscribe(CliEventRenderer(console))
@@ -310,7 +728,6 @@ async def main() -> None:
             payload=ConfigMessagePayload(text=message.text),
         ))
 
-    # CLI overrides
     if args.no_interactive:
         config.interactive = False
     if args.auto_commit:
@@ -319,10 +736,7 @@ async def main() -> None:
         config.allow_delete = True
 
     history = load_history()
-    prompt = args.prompt
-    if not prompt:
-        prompt = get_prompt_interactively(history)
-
+    prompt = args.prompt or get_prompt_interactively(history)
     if not prompt:
         rprint("[bold red]❌ No prompt provided.[/bold red]")
         sys.exit(1)
@@ -358,335 +772,50 @@ async def main() -> None:
         )
         return
 
-    # 1. Build context
-    event_bus.publish(AgentEvent(
-        name="state.changed",
-        state="planning",
-        message="Building context.",
-        payload=StateChangedPayload(),
-    ))
-    with console.status("[bold green]Analyzing codebase..."):
-        context_result = build_context(target_dir, prompt, config)
-
-    for warning in context_result.token_warnings:
-        event_bus.publish(AgentEvent(
-            name="context.warning",
-            level="warning",
-            state="planning",
-            message=warning,
-            payload=ContextWarningPayload(warning=warning),
-        ))
-
-    if context_result.skipped_paths:
-        event_bus.publish(AgentEvent(
-            name="context.skipped",
-            level="warning",
-            state="planning",
-            payload=ContextSkippedPayload(
-                skipped_count=len(context_result.skipped_paths),
-                paths=tuple(context_result.skipped_paths),
-            ),
-        ))
-
-    event_bus.publish(AgentEvent(
-        name="context.summary",
-        state="planning",
-        payload=ContextSummaryPayload(
-            file_count=len(context_result.entries),
-            used_tokens=context_result.used_tokens,
-            token_budget=context_result.token_budget,
-        ),
-    ))
-
-    # 2. Call architect
-    event_bus.publish(AgentEvent(
-        name="state.changed",
-        state="planning",
-        message="Drafting implementation plan.",
-        payload=StateChangedPayload(),
-    ))
+    runtime = WorkflowRuntime(target_dir=target_dir, prompt=prompt, config=config)
+    state = WorkflowState.BUILDING_CONTEXT
     try:
-        progress = Progress(
-            SpinnerColumn(style="bold magenta"),
-            TextColumn("{task.description}"),
-            transient=True,
-            console=console,
-        )
-        task_id = progress.add_task("Architect is streaming response...", total=None)
-        chunk_count = 0
+        while state not in {WorkflowState.COMPLETED, WorkflowState.FAILED}:
+            match state:
+                case WorkflowState.BUILDING_CONTEXT:
+                    state = run_build_context_stage(runtime, event_bus)
+                case WorkflowState.PLANNING:
+                    state = await run_planning_stage(runtime, event_bus)
+                case WorkflowState.EDITING_PLAN:
+                    try:
+                        state = run_editing_plan_stage(runtime, event_bus)
+                    except Exception:
+                        state = WorkflowState.FAILED
+                case WorkflowState.EXECUTING:
+                    state = await run_execution_stage(runtime, event_bus)
+                case WorkflowState.REVIEWING_DIFF:
+                    state = run_review_diff_stage(runtime, event_bus)
+                case WorkflowState.APPLYING:
+                    state = run_applying_stage(runtime, event_bus)
+                case WorkflowState.COMMITTING:
+                    state = run_committing_stage(runtime, event_bus)
+                case _:
+                    state = WorkflowState.FAILED
 
-        def on_plan_chunk(_chunk: str) -> None:
-            nonlocal chunk_count
-            chunk_count += 1
-            progress.update(
-                task_id,
-                description=f"Architect is streaming response... ({chunk_count} chunks)",
-            )
-
-        with Live(progress, console=console, refresh_per_second=12):
-            plan = await call_architect(
-                prompt,
-                context_result.context,
-                config,
-                on_chunk=on_plan_chunk,
-            )
-    except Exception as e:
-        event_bus.publish(AgentEvent(
-            name="run.failed",
-            level="error",
-            state="planning",
-            message=str(e),
-            payload=EmptyPayload(),
-        ))
-        console.print(f"\n[bold red]Error calling architect:[/bold red] {e}")
-        sys.exit(1)
-
-    plan_path = create_plan_draft_path()
-    try:
-        write_plan_draft(plan_path, plan)
-    except OSError as e:
-        event_bus.publish(AgentEvent(
-            name="run.failed",
-            level="error",
-            state="planning",
-            message=str(e),
-            payload=EmptyPayload(),
-        ))
-        console.print(f"\n[bold red]Error saving plan draft:[/bold red] {e}")
-        sys.exit(1)
-
-    event_bus.publish(AgentEvent(
-        name="plan.ready",
-        state="reviewing_plan",
-        message="Implementation plan ready.",
-        payload=PlanReadyPayload(
-            summary=plan.summary,
-            task_count=len(plan.tasks),
-            draft_path=str(plan_path),
-        ),
-    ))
-    rprint(
-        Panel.fit(
-            format_plan_for_display(plan),
-            title="🧭 plan",
-            border_style="cyan",
-        )
-    )
-
-    try:
-        if not plan.tasks:
+        if state == WorkflowState.COMPLETED:
             event_bus.publish(AgentEvent(
-                name="run.no_changes",
-                state="completed",
-                message="No changes needed.",
-                payload=EmptyPayload(),
-            ))
-            return
-
-        approved_plan = plan
-        if config.interactive:
-            event_bus.publish(AgentEvent(
-                name="state.changed",
-                state="editing_plan",
-                message="Opening plan editor.",
-                payload=StateChangedPayload(),
-            ))
-            try:
-                approved_plan = open_plan_in_editor(plan_path)
-            except Exception as e:
-                event_bus.publish(AgentEvent(
-                    name="run.failed",
-                    level="error",
-                    state="editing_plan",
-                    message=str(e),
-                    payload=EmptyPayload(),
-                ))
-                console.print(f"\n[bold red]Plan editing aborted:[/bold red] {e}")
-                sys.exit(1)
-
-        # 3. Call coder once per approved task
-        event_bus.publish(AgentEvent(
-            name="state.changed",
-            state="coding",
-            message="Generating file replacements.",
-            payload=StateChangedPayload(),
-        ))
-        all_changes: list[dict[str, str]] = []
-        task_summaries: list[str] = []
-        working_context = context_result.context
-
-        for index, task in enumerate(approved_plan.tasks, 1):
-            event_bus.publish(AgentEvent(
-                name="state.changed",
-                state="coding_task",
-                message=(
-                    f"Generating file replacements for task {index}/"
-                    f"{len(approved_plan.tasks)}."
+                name="run.completed",
+                state=WorkflowState.COMPLETED.value,
+                message="Agent run completed.",
+                payload=RunCompletedPayload(
+                    affected_count=len(runtime.affected_files),
                 ),
-                payload=StateChangedPayload(),
             ))
-            try:
-                progress = Progress(
-                    SpinnerColumn(style="bold magenta"),
-                    TextColumn("{task.description}"),
-                    transient=True,
-                    console=console,
-                )
-                task_id = progress.add_task(
-                    f"Coder is streaming task {index}/{len(approved_plan.tasks)}...",
-                    total=None,
-                )
-                chunk_count = 0
-
-                def on_chunk(_chunk: str) -> None:
-                    nonlocal chunk_count
-                    chunk_count += 1
-                    progress.update(
-                        task_id,
-                        description=(
-                            f"Coder is streaming task {index}/"
-                            f"{len(approved_plan.tasks)}... ({chunk_count} chunks)"
-                        ),
-                    )
-
-                with Live(progress, console=console, refresh_per_second=12):
-                    result = await call_coder_for_task(
-                        approved_plan,
-                        task,
-                        working_context,
-                        config,
-                        on_chunk=on_chunk,
-                    )
-            except Exception as e:
-                event_bus.publish(AgentEvent(
-                    name="run.failed",
-                    level="error",
-                    state="coding",
-                    message=str(e),
-                    payload=EmptyPayload(),
-                ))
-                console.print(f"\n[bold red]Error calling coder:[/bold red] {e}")
-                sys.exit(1)
-
-            try:
-                summary, changes = validate_llm_result(
-                    result,
-                    config,
-                )
-            except ValueError as e:
-                event_bus.publish(AgentEvent(
-                    name="run.failed",
-                    level="error",
-                    state="validating",
-                    message=str(e),
-                    payload=EmptyPayload(),
-                ))
-                console.print(f"\n[bold red]Invalid model response:[/bold red] {e}")
-                sys.exit(1)
-
-            if summary:
-                task_summaries.append(summary)
-            all_changes.extend(changes)
-            working_context = build_working_context(
-                context_result.context,
-                all_changes,
-            )
-
-            if changes:
-                rprint(
-                    f"[green]✓[/green] Task {index}/{len(approved_plan.tasks)}: "
-                    f"{summary} ({len(changes)} file(s))"
-                )
-            else:
-                rprint(
-                    f"[yellow]⚠[/yellow] Task {index}/{len(approved_plan.tasks)}: "
-                    f"No changes required for '{task.goal}'"
-                )
-
-        if not all_changes:
-            event_bus.publish(AgentEvent(
-                name="run.no_changes",
-                state="completed",
-                message="No changes needed.",
-                payload=EmptyPayload(),
-            ))
-            return
-
-        final_summary = approved_plan.summary
-        if len(task_summaries) == 1:
-            final_summary = task_summaries[0]
-
-        event_bus.emit(
-            "run.proposal_ready",
-            RunProposalReadyPayload(
-                summary=final_summary,
-                change_count=len(all_changes),
-            ),
-            state="validated",
-            message="Model response validated.",
-        )
-
-        # 4. Preview
-        event_bus.publish(AgentEvent(
-            name="state.changed",
-            state="previewing",
-            message="Previewing proposed changes.",
-            payload=StateChangedPayload(),
-        ))
-        preview_changes(target_dir, all_changes, event_bus=event_bus)
-
-        # 5. Confirm (if interactive)
-        if config.interactive:
-            event_bus.publish(AgentEvent(
-                name="state.changed",
-                state="waiting_for_user",
-                message="Waiting for user confirmation.",
-                payload=StateChangedPayload(),
-            ))
-            print()
-            if not Confirm.ask("[bold yellow]Apply these changes?[/bold yellow]"):
-                event_bus.publish(AgentEvent(
-                    name="run.aborted",
-                    level="warning",
-                    state="waiting_for_user",
-                    message="User aborted run.",
-                    payload=EmptyPayload(),
-                ))
-                sys.exit(0)
-
-        # 6. Apply
-        event_bus.publish(AgentEvent(
-            name="state.changed",
-            state="applying",
-            message="Applying changes.",
-            payload=StateChangedPayload(),
-        ))
-        rprint("\n[bold green]📝 Applying changes...[/bold green]")
-        affected = apply_changes(target_dir, all_changes, event_bus=event_bus)
-
-        # 7. Commit (optional)
-        if config.auto_commit and affected:
-            event_bus.publish(AgentEvent(
-                name="state.changed",
-                state="committing",
-                message="Creating git commit.",
-                payload=StateChangedPayload(),
-            ))
-            git_commit(target_dir, final_summary, affected, event_bus=event_bus)
-
-        event_bus.publish(AgentEvent(
-            name="run.completed",
-            state="completed",
-            message="Agent run completed.",
-            payload=RunCompletedPayload(affected_count=len(affected)),
-        ))
     finally:
-        plan_path.unlink(missing_ok=True)
+        if runtime.plan_path is not None:
+            runtime.plan_path.unlink(missing_ok=True)
+
+
 
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        asyncio.run(run_workflow())
     except KeyboardInterrupt:
         rprint("\n[bold red]Stopping...[/bold red]")
         sys.exit(0)
