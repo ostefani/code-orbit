@@ -1,5 +1,4 @@
 import asyncio
-import fnmatch
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,6 +22,7 @@ from .embeddings import (
 from .events import ContextWarningPayload, EventBus
 from .llm import SYSTEM_PROMPT
 from .token_counter import count_tokens
+from .utils import _is_ignored, _is_within_root
 
 
 _SEMANTIC_SCORE_WEIGHT = 45.0
@@ -69,27 +69,6 @@ class ContextBuildResult:
     token_warnings: tuple[str, ...]
     semantic_matches: tuple[SemanticMatch, ...] = ()
     budget_breakdown: ContextBudgetBreakdown | None = None
-
-
-def _is_ignored(path: Path, root: Path, patterns: list[str]) -> bool:
-    rel = str(path.relative_to(root))
-    for pattern in patterns:
-        if fnmatch.fnmatch(path.name, pattern):
-            return True
-        if fnmatch.fnmatch(rel, pattern):
-            return True
-        for part in path.parts:
-            if fnmatch.fnmatch(part, pattern):
-                return True
-    return False
-
-
-def _is_within_root(path: Path, root: Path) -> bool:
-    try:
-        path.resolve().relative_to(root.resolve())
-        return True
-    except ValueError:
-        return False
 
 
 def _safe_candidate(root: Path, path: Path) -> FileCandidate | None:

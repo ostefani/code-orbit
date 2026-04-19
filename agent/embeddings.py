@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Protocol, Sequence, Self
 
 from .config import Config
-from .constants import LOW_VALUE_DIRS, LOW_VALUE_FILENAMES
+from .utils import _is_ignored, _is_within_root
 
 
 DEFAULT_CACHE_DIR = ".code-orbit"
@@ -283,33 +283,6 @@ def default_embedding_cache_path(root: str | Path) -> Path:
 
 def hash_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def _is_ignored(path: Path, root: Path, patterns: Sequence[str]) -> bool:
-    import fnmatch
-
-    rel = str(path.relative_to(root))
-    if path.name in LOW_VALUE_FILENAMES:
-        return True
-    if any(part in LOW_VALUE_DIRS for part in path.parts):
-        return True
-    for pattern in patterns:
-        if fnmatch.fnmatch(path.name, pattern):
-            return True
-        if fnmatch.fnmatch(rel, pattern):
-            return True
-        for part in path.parts:
-            if fnmatch.fnmatch(part, pattern):
-                return True
-    return False
-
-
-def _is_within_root(path: Path, root: Path) -> bool:
-    try:
-        path.resolve().relative_to(root.resolve())
-        return True
-    except ValueError:
-        return False
 
 
 def _safe_read_text(path: Path) -> str | None:
