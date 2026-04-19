@@ -14,7 +14,7 @@ import asyncio
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
 
@@ -773,12 +773,12 @@ async def run_workflow() -> None:
             payload=ConfigMessagePayload(text=message.text),
         ))
 
-    if args.no_interactive:
-        config.interactive = False
-    if args.auto_commit:
-        config.auto_commit = True
-    if args.allow_delete:
-        config.allow_delete = True
+    config = replace(
+        config,
+        interactive=config.interactive and not args.no_interactive,
+        auto_commit=config.auto_commit or args.auto_commit,
+        allow_delete=config.allow_delete or args.allow_delete,
+    )
 
     history = load_history()
     prompt = args.prompt or get_prompt_interactively(history)

@@ -16,7 +16,7 @@ class ConfigLoadResult:
     messages: tuple[ConfigLoadMessage, ...] = ()
 
 
-@dataclass
+@dataclass(frozen=True)
 class Config:
     # llama.cpp server
     api_base: str = "http://localhost:8081/v1"
@@ -37,8 +37,8 @@ class Config:
     tokenizer_model: Optional[str] = None
 
     # Files to skip when building context
-    ignore_patterns: list[str] = field(
-        default_factory=lambda: [
+    ignore_patterns: tuple[str, ...] = field(
+        default_factory=lambda: (
             ".git",
             "__pycache__",
             "*.pyc",
@@ -63,7 +63,7 @@ class Config:
             "*.gz",
             "*.min.js",
             "*.min.css",
-        ]
+        )
     )
 
     # Max file size to include in context (bytes)
@@ -76,10 +76,15 @@ class Config:
     allow_delete: bool = False
 
     def __post_init__(self) -> None:
-        if not isinstance(self.ignore_patterns, list):
-            self.ignore_patterns = list(self.ignore_patterns)
-        if ".code-orbit" not in self.ignore_patterns:
-            self.ignore_patterns.append(".code-orbit")
+        patterns = tuple(self.ignore_patterns)
+        if ".code-orbit" not in patterns:
+            patterns = patterns + (".code-orbit",)
+        object.__setattr__(self, "ignore_patterns", patterns)
+
+        tokenizer_model_path = self.tokenizer_model_path
+        if tokenizer_model_path is not None and not isinstance(tokenizer_model_path, Path):
+            object.__setattr__(self, "tokenizer_model_path", Path(tokenizer_model_path))
+
         if self.max_context_tokens <= 0:
             raise ValueError("max_context_tokens must be greater than zero.")
         if self.max_response_tokens < 0:
