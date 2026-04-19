@@ -31,6 +31,7 @@ profiles:
         max_response_tokens: 16384
         tokenizer_backend: tokenizers_json
         tokenizer_model_path: ~/.llamacpp_models/ggufs/gemma-4-E4B-it/tokenizer.json
+        auto_commit: true
     gemma-4-26B:
         model: 'gemma-4-26B'
         max_context_tokens: 32768

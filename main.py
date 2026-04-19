@@ -25,7 +25,12 @@ from rich import print as rprint
 
 from agent.config import Config
 from agent.context import build_context, get_file_tree
-from agent.llm import LLMResponseSchema, PlanSchema, call_architect, call_coder
+from agent.llm import (
+    LLMResponseSchema,
+    PlanSchema,
+    call_architect,
+    call_coder_for_task,
+)
 from agent.events import (
     AgentEvent,
     ConfigMessagePayload,
@@ -145,7 +150,8 @@ def get_prompt_interactively(history: list[str]) -> str:
 
 
 def validate_llm_result(
-    result: LLMResponseSchema, config: Config
+    result: LLMResponseSchema,
+    config: Config,
 ) -> tuple[str, list[dict[str, str]]]:
     validated_changes: list[dict[str, str]] = []
     seen_paths: set[str] = set()
@@ -230,6 +236,30 @@ def open_plan_in_editor(plan_path: Path) -> PlanSchema:
                 default=True,
             ):
                 raise
+
+
+def render_applied_changes_context(changes: list[dict[str, str]]) -> str:
+    if not changes:
+        return ""
+
+    blocks = ["<applied_changes>"]
+    for change in changes:
+        path = change["path"]
+        action = change["action"]
+        content = change.get("content")
+        blocks.append(f'<change path="{path}" action="{action}">')
+        if content is not None:
+            blocks.append(content)
+        blocks.append("</change>")
+    blocks.append("</applied_changes>")
+    return "\n".join(blocks)
+
+
+def build_working_context(base_context: str, changes: list[dict[str, str]]) -> str:
+    applied_changes_context = render_applied_changes_context(changes)
+    if not applied_changes_context:
+        return base_context
+    return f"{base_context}\n\n{applied_changes_context}"
 
 
 def format_plan_for_display(plan: PlanSchema) -> str:
@@ -474,70 +504,106 @@ async def main() -> None:
                 console.print(f"\n[bold red]Plan editing aborted:[/bold red] {e}")
                 sys.exit(1)
 
-        # 3. Call coder
+        # 3. Call coder once per approved task
         event_bus.publish(AgentEvent(
             name="state.changed",
             state="coding",
             message="Generating file replacements.",
             payload=StateChangedPayload(),
         ))
-        try:
-            progress = Progress(
-                SpinnerColumn(style="bold magenta"),
-                TextColumn("{task.description}"),
-                transient=True,
-                console=console,
-            )
-            task_id = progress.add_task("Coder is streaming response...", total=None)
-            chunk_count = 0
+        all_changes: list[dict[str, str]] = []
+        task_summaries: list[str] = []
+        working_context = context_result.context
 
-            def on_chunk(_chunk: str) -> None:
-                nonlocal chunk_count
-                chunk_count += 1
-                progress.update(
-                    task_id,
-                    description=f"Coder is streaming response... ({chunk_count} chunks)",
+        for index, task in enumerate(approved_plan.tasks, 1):
+            event_bus.publish(AgentEvent(
+                name="state.changed",
+                state="coding_task",
+                message=(
+                    f"Generating file replacements for task {index}/"
+                    f"{len(approved_plan.tasks)}."
+                ),
+                payload=StateChangedPayload(),
+            ))
+            try:
+                progress = Progress(
+                    SpinnerColumn(style="bold magenta"),
+                    TextColumn("{task.description}"),
+                    transient=True,
+                    console=console,
                 )
+                task_id = progress.add_task(
+                    f"Coder is streaming task {index}/{len(approved_plan.tasks)}...",
+                    total=None,
+                )
+                chunk_count = 0
 
-            with Live(progress, console=console, refresh_per_second=12):
-                result = await call_coder(
-                    approved_plan,
-                    context_result.context,
+                def on_chunk(_chunk: str) -> None:
+                    nonlocal chunk_count
+                    chunk_count += 1
+                    progress.update(
+                        task_id,
+                        description=(
+                            f"Coder is streaming task {index}/"
+                            f"{len(approved_plan.tasks)}... ({chunk_count} chunks)"
+                        ),
+                    )
+
+                with Live(progress, console=console, refresh_per_second=12):
+                    result = await call_coder_for_task(
+                        approved_plan,
+                        task,
+                        working_context,
+                        config,
+                        on_chunk=on_chunk,
+                    )
+            except Exception as e:
+                event_bus.publish(AgentEvent(
+                    name="run.failed",
+                    level="error",
+                    state="coding",
+                    message=str(e),
+                    payload=EmptyPayload(),
+                ))
+                console.print(f"\n[bold red]Error calling coder:[/bold red] {e}")
+                sys.exit(1)
+
+            try:
+                summary, changes = validate_llm_result(
+                    result,
                     config,
-                    on_chunk=on_chunk,
                 )
-        except Exception as e:
-            event_bus.publish(AgentEvent(
-                name="run.failed",
-                level="error",
-                state="coding",
-                message=str(e),
-                payload=EmptyPayload(),
-            ))
-            console.print(f"\n[bold red]Error calling coder:[/bold red] {e}")
-            sys.exit(1)
+            except ValueError as e:
+                event_bus.publish(AgentEvent(
+                    name="run.failed",
+                    level="error",
+                    state="validating",
+                    message=str(e),
+                    payload=EmptyPayload(),
+                ))
+                console.print(f"\n[bold red]Invalid model response:[/bold red] {e}")
+                sys.exit(1)
 
-        try:
-            summary, changes = validate_llm_result(result, config)
-        except ValueError as e:
-            event_bus.publish(AgentEvent(
-                name="run.failed",
-                level="error",
-                state="validating",
-                message=str(e),
-                payload=EmptyPayload(),
-            ))
-            console.print(f"\n[bold red]Invalid model response:[/bold red] {e}")
-            sys.exit(1)
+            if summary:
+                task_summaries.append(summary)
+            all_changes.extend(changes)
+            working_context = build_working_context(
+                context_result.context,
+                all_changes,
+            )
 
-        event_bus.emit(
-            "run.proposal_ready",
-            RunProposalReadyPayload(summary=summary, change_count=len(changes)),
-            state="validated",
-            message="Model response validated.",
-        )
+            if changes:
+                rprint(
+                    f"[green]✓[/green] Task {index}/{len(approved_plan.tasks)}: "
+                    f"{summary} ({len(changes)} file(s))"
+                )
+            else:
+                rprint(
+                    f"[yellow]⚠[/yellow] Task {index}/{len(approved_plan.tasks)}: "
+                    f"No changes required for '{task.goal}'"
+                )
 
-        if not changes:
+        if not all_changes:
             event_bus.publish(AgentEvent(
                 name="run.no_changes",
                 state="completed",
@@ -546,6 +612,20 @@ async def main() -> None:
             ))
             return
 
+        final_summary = approved_plan.summary
+        if len(task_summaries) == 1:
+            final_summary = task_summaries[0]
+
+        event_bus.emit(
+            "run.proposal_ready",
+            RunProposalReadyPayload(
+                summary=final_summary,
+                change_count=len(all_changes),
+            ),
+            state="validated",
+            message="Model response validated.",
+        )
+
         # 4. Preview
         event_bus.publish(AgentEvent(
             name="state.changed",
@@ -553,7 +633,7 @@ async def main() -> None:
             message="Previewing proposed changes.",
             payload=StateChangedPayload(),
         ))
-        preview_changes(target_dir, changes, event_bus=event_bus)
+        preview_changes(target_dir, all_changes, event_bus=event_bus)
 
         # 5. Confirm (if interactive)
         if config.interactive:
@@ -582,7 +662,7 @@ async def main() -> None:
             payload=StateChangedPayload(),
         ))
         rprint("\n[bold green]📝 Applying changes...[/bold green]")
-        affected = apply_changes(target_dir, changes, event_bus=event_bus)
+        affected = apply_changes(target_dir, all_changes, event_bus=event_bus)
 
         # 7. Commit (optional)
         if config.auto_commit and affected:
@@ -592,7 +672,7 @@ async def main() -> None:
                 message="Creating git commit.",
                 payload=StateChangedPayload(),
             ))
-            git_commit(target_dir, summary, affected, event_bus=event_bus)
+            git_commit(target_dir, final_summary, affected, event_bus=event_bus)
 
         event_bus.publish(AgentEvent(
             name="run.completed",
