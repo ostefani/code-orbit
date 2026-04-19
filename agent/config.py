@@ -23,6 +23,12 @@ class Config:
     api_key: str = "dummy"
     model: str = "local"
 
+    # Embeddings for semantic retrieval / RAG
+    embedding_api_base: str = "http://localhost:8081/v1"
+    embedding_model: str = "nomic-embed-text"
+    embedding_batch_size: int = 16
+    embedding_max_concurrency: int = 4
+
     max_context_tokens: int = 16384
     max_response_tokens: int = 4096
     tokenizer_backend: str = "estimate"
@@ -40,6 +46,7 @@ class Config:
             ".venv",
             "venv",
             "env",
+            ".code-orbit",
             "dist",
             "build",
             "*.egg-info",
@@ -67,6 +74,21 @@ class Config:
     auto_commit: bool = False
 
     allow_delete: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.ignore_patterns, list):
+            self.ignore_patterns = list(self.ignore_patterns)
+        if ".code-orbit" not in self.ignore_patterns:
+            self.ignore_patterns.append(".code-orbit")
+        if self.max_context_tokens <= 0:
+            raise ValueError("max_context_tokens must be greater than zero.")
+        if self.max_response_tokens < 0:
+            raise ValueError("max_response_tokens must not be negative.")
+        if self.max_response_tokens >= self.max_context_tokens:
+            raise ValueError(
+                "max_response_tokens must be smaller than max_context_tokens "
+                "so there is room for file context."
+            )
 
     @classmethod
     def load(

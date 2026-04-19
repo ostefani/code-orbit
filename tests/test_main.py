@@ -4,6 +4,15 @@ from agent.llm import ChangeSchema, LLMResponseSchema, PlanSchema, PlanTaskSchem
 from main import build_working_context, open_plan_in_editor, validate_llm_result
 
 
+def test_config_rejects_impossible_context_budget() -> None:
+    try:
+        Config(max_context_tokens=1024, max_response_tokens=1024)
+    except ValueError as exc:
+        assert "room for file context" in str(exc)
+    else:
+        raise AssertionError("Expected impossible budgets to be rejected")
+
+
 def test_validate_llm_result_rejects_delete_by_default() -> None:
     result = LLMResponseSchema(
         summary="Remove file",

@@ -33,3 +33,12 @@ def test_load_with_diagnostics_reports_missing_profile(tmp_path: Path) -> None:
     assert len(result.messages) == 1
     assert result.messages[0].level == "warning"
     assert "Profile 'missing' not found" in result.messages[0].text
+
+
+def test_config_defaults_include_embedding_settings() -> None:
+    config = Config()
+
+    assert config.embedding_model == "nomic-embed-text"
+    assert config.embedding_api_base.startswith("http://localhost:")
+    assert config.embedding_batch_size == 16
+    assert config.embedding_max_concurrency == 4

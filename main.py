@@ -26,7 +26,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich import print as rprint
 
 from agent.config import Config
-from agent.context import ContextBuildResult, build_context, get_file_tree
+from agent.context import ContextBuildResult, build_context_async, get_file_tree
 from agent.llm import (
     LLMResponseSchema,
     PlanSchema,
@@ -39,6 +39,8 @@ from agent.events import (
     ConfigMessagePayload,
     ContextSkippedPayload,
     ContextSummaryPayload,
+    ContextSemanticMatchItem,
+    ContextSemanticMatchPayload,
     ContextWarningPayload,
     EmptyPayload,
     EventBus,
@@ -341,7 +343,7 @@ def reset_execution_state(runtime: WorkflowRuntime) -> None:
         runtime.working_context = runtime.context_result.context
 
 
-def run_build_context_stage(
+async def run_build_context_stage(
     runtime: WorkflowRuntime, event_bus: EventBus
 ) -> WorkflowState:
     event_bus.publish(AgentEvent(
@@ -351,8 +353,11 @@ def run_build_context_stage(
         payload=StateChangedPayload(),
     ))
     with console.status("[bold green]Analyzing codebase..."):
-        runtime.context_result = build_context(
-            runtime.target_dir, runtime.prompt, runtime.config
+        runtime.context_result = await build_context_async(
+            runtime.target_dir,
+            runtime.prompt,
+            runtime.config,
+            event_bus=event_bus,
         )
     runtime.working_context = runtime.context_result.context
 
@@ -383,8 +388,49 @@ def run_build_context_stage(
             file_count=len(runtime.context_result.entries),
             used_tokens=runtime.context_result.used_tokens,
             token_budget=runtime.context_result.token_budget,
+            context_window_tokens=(
+                runtime.context_result.budget_breakdown.context_window_tokens
+                if runtime.context_result.budget_breakdown is not None
+                else runtime.config.max_context_tokens
+            ),
+            response_reserve_tokens=(
+                runtime.context_result.budget_breakdown.response_reserve_tokens
+                if runtime.context_result.budget_breakdown is not None
+                else runtime.config.max_response_tokens
+            ),
+            scaffold_tokens=(
+                runtime.context_result.budget_breakdown.scaffold_tokens
+                if runtime.context_result.budget_breakdown is not None
+                else 0
+            ),
+            safety_margin_tokens=(
+                runtime.context_result.budget_breakdown.safety_margin_tokens
+                if runtime.context_result.budget_breakdown is not None
+                else 0
+            ),
         ),
     ))
+
+    if runtime.context_result.semantic_matches:
+        event_bus.publish(AgentEvent(
+            name="context.semantic_matches",
+            level="debug",
+            state=WorkflowState.BUILDING_CONTEXT.value,
+            message="Semantic matches selected for context.",
+            payload=ContextSemanticMatchPayload(
+                prompt=runtime.prompt,
+                selected_count=len(runtime.context_result.semantic_matches),
+                matches=tuple(
+                    ContextSemanticMatchItem(
+                        path=match.path,
+                        semantic_score=match.semantic_score,
+                        lexical_score=match.lexical_score,
+                        blended_score=match.blended_score,
+                    )
+                    for match in runtime.context_result.semantic_matches
+                ),
+            ),
+        ))
     return WorkflowState.PLANNING
 
 
@@ -778,7 +824,7 @@ async def run_workflow() -> None:
         while state not in {WorkflowState.COMPLETED, WorkflowState.FAILED}:
             match state:
                 case WorkflowState.BUILDING_CONTEXT:
-                    state = run_build_context_stage(runtime, event_bus)
+                    state = await run_build_context_stage(runtime, event_bus)
                 case WorkflowState.PLANNING:
                     state = await run_planning_stage(runtime, event_bus)
                 case WorkflowState.EDITING_PLAN:

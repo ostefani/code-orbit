@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from pathlib import Path
 
 from rich.console import Console
@@ -13,6 +11,7 @@ from .events import (
     ConfigMessagePayload,
     ContextSkippedPayload,
     ContextSummaryPayload,
+    ContextSemanticMatchPayload,
     ContextWarningPayload,
     GitCommitFailedPayload,
     GitCommitSucceededPayload,
@@ -46,8 +45,28 @@ class CliEventRenderer:
         ):
             self.console.print(
                 f"\n[dim]Context:[/dim] {event.payload.file_count} files | "
-                f"~{event.payload.used_tokens:,} file tokens"
+                f"~{event.payload.used_tokens:,} file tokens | "
+                f"budget {event.payload.token_budget:,}/"
+                f"{event.payload.context_window_tokens:,} "
+                f"(response reserve {event.payload.response_reserve_tokens:,}, "
+                f"wrapper {event.payload.scaffold_tokens:,}, "
+                f"safety {event.payload.safety_margin_tokens:,})"
             )
+            return
+
+        if event.name == "context.semantic_matches" and isinstance(
+            event.payload, ContextSemanticMatchPayload
+        ):
+            self.console.print(
+                f"\n[dim]Semantic matches for:[/dim] {event.payload.prompt}"
+            )
+            for match in event.payload.matches[:5]:
+                self.console.print(
+                    f"  - {match.path} "
+                    f"[dim](semantic {match.semantic_score:.2f}, "
+                    f"lexical {match.lexical_score:.2f}, "
+                    f"blended {match.blended_score:.2f})[/dim]"
+                )
             return
 
         if event.name == "context.skipped" and isinstance(
