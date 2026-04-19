@@ -579,13 +579,15 @@ async def run_execution_stage(
             )
             chunk_count = 0
 
-            def on_chunk(_chunk: str) -> None:
+            # _i binds index by value; if tasks are ever parallelised,
+            # task_id and progress would also need default-argument binding.
+            def on_chunk(_chunk: str, _i: int = index) -> None:
                 nonlocal chunk_count
                 chunk_count += 1
                 progress.update(
                     task_id,
                     description=(
-                        f"Coder is streaming task {index}/"
+                        f"Coder is streaming task {_i}/"
                         f"{len(runtime.approved_plan.tasks)}... ({chunk_count} chunks)"
                     ),
                 )
