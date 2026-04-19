@@ -1,3 +1,4 @@
+import json
 import hashlib
 from pathlib import Path
 
@@ -59,6 +60,8 @@ def test_build_embedding_sync_creates_cache_and_reuses_files(tmp_path: Path) -> 
     )
 
     assert result.cache_path.exists()
+    assert result.cache_path.suffix == ".npz"
+    assert result.cache_path.read_bytes().startswith(b"PK")
     assert set(result.updated_files) == {
         "src/auth/middleware.py",
         "src/tests.py",
@@ -101,6 +104,183 @@ def test_build_embedding_sync_creates_cache_and_reuses_files(tmp_path: Path) -> 
     assert third.updated_files == ()
     assert third.reused_files == ("src/auth/middleware.py",)
     assert "src/tests.py" not in EmbeddingCache.load(third.cache_path).files
+
+
+def test_embedding_cache_round_trips_npz(tmp_path: Path) -> None:
+    cache = EmbeddingCache(
+        version=2,
+        model="embedding-model",
+        api_base="http://example.invalid/v1",
+        files={
+            "src/app.py": FileEmbeddingRecord(
+                path="src/app.py",
+                sha256="abc123",
+                chunks=(
+                    ChunkEmbedding(
+                        index=0,
+                        vector=(0.1, 0.2, 0.3),
+                        start_line=1,
+                        end_line=3,
+                        content_hash="chunk-hash",
+                    ),
+                ),
+            ),
+        },
+    )
+
+    cache_path = tmp_path / "embeddings_cache.npz"
+    cache.save(cache_path)
+
+    assert cache_path.read_bytes().startswith(b"PK")
+
+    loaded = EmbeddingCache.load(cache_path)
+    assert loaded.version == 2
+    assert loaded.model == "embedding-model"
+    assert loaded.api_base == "http://example.invalid/v1"
+    assert loaded.files == cache.files
+
+
+def test_embedding_cache_loads_legacy_json(tmp_path: Path) -> None:
+    cache_path = tmp_path / "embeddings_cache.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "model": "legacy-model",
+                "api_base": "http://legacy.invalid/v1",
+                "files": {
+                    "src/app.py": {
+                        "sha256": "abc123",
+                        "chunks": [
+                            {
+                                "index": 0,
+                                "vector": [0.4, 0.5],
+                                "start_line": 1,
+                                "end_line": 2,
+                                "content_hash": "legacy-chunk",
+                            }
+                        ],
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cache = EmbeddingCache.load(cache_path)
+    assert cache.version == 1
+    assert cache.model == "legacy-model"
+    assert cache.api_base == "http://legacy.invalid/v1"
+    assert cache.files["src/app.py"].sha256 == "abc123"
+    assert cache.files["src/app.py"].chunks[0].vector == (0.4, 0.5)
+
+
+def test_embedding_cache_loads_legacy_json_sibling_for_missing_npz(
+    tmp_path: Path,
+) -> None:
+    cache_path = tmp_path / ".code-orbit" / "embeddings_cache.npz"
+    cache_path.parent.mkdir()
+    legacy_path = cache_path.parent / "embeddings_cache.json"
+    legacy_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "model": "legacy-model",
+                "api_base": "http://legacy.invalid/v1",
+                "files": {
+                    "src/app.py": {
+                        "sha256": "abc123",
+                        "chunks": [
+                            {
+                                "index": 0,
+                                "vector": [0.4, 0.5],
+                                "start_line": 1,
+                                "end_line": 2,
+                                "content_hash": "legacy-chunk",
+                            }
+                        ],
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cache = EmbeddingCache.load(cache_path)
+    assert cache.model == "legacy-model"
+    assert cache.files["src/app.py"].chunks[0].vector == (0.4, 0.5)
+
+
+def test_build_embedding_sync_migrates_legacy_cache(tmp_path: Path) -> None:
+    _write_codebase(tmp_path)
+    config = Config(ignore_patterns=[".git", "node_modules"])
+    legacy_cache_dir = tmp_path / ".code-orbit"
+    legacy_cache_dir.mkdir()
+    legacy_cache_path = legacy_cache_dir / "embeddings_cache.json"
+
+    middleware_hash = hashlib.sha256(
+        (tmp_path / "src" / "auth" / "middleware.py").read_bytes()
+    ).hexdigest()
+    tests_hash = hashlib.sha256(
+        (tmp_path / "src" / "tests.py").read_bytes()
+    ).hexdigest()
+    legacy_cache_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "model": config.embedding_model,
+                "api_base": config.embedding_api_base,
+                "files": {
+                    "src/auth/middleware.py": {
+                        "sha256": middleware_hash,
+                        "chunks": [
+                            {
+                                "index": 0,
+                                "vector": [0.9, 0.1],
+                                "start_line": 1,
+                                "end_line": 2,
+                                "content_hash": "middleware-chunk",
+                            }
+                        ],
+                    },
+                    "src/tests.py": {
+                        "sha256": tests_hash,
+                        "chunks": [
+                            {
+                                "index": 0,
+                                "vector": [0.1, 0.9],
+                                "start_line": 1,
+                                "end_line": 2,
+                                "content_hash": "tests-chunk",
+                            }
+                        ],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    client = FakeEmbeddingClient()
+    result = build_embedding_sync(
+        tmp_path,
+        config,
+        client=client,
+        cache_path=default_embedding_cache_path(tmp_path),
+        batch_size=2,
+    )
+
+    assert result.cache_path.suffix == ".npz"
+    assert result.updated_files == ()
+    assert set(result.reused_files) == {
+        "src/auth/middleware.py",
+        "src/tests.py",
+    }
+    assert client.requests == []
+    assert set(EmbeddingCache.load(result.cache_path).files) == {
+        "src/auth/middleware.py",
+        "src/tests.py",
+    }
 
 
 def test_build_embedding_sync_reads_each_file_once(tmp_path: Path, monkeypatch) -> None:
