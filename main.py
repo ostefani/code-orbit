@@ -28,7 +28,7 @@ from rich import print as rprint
 from agent.config import Config
 from agent.context import ContextBuildResult, build_context_async, get_file_tree
 from agent.llm import (
-    LLMResponseSchema,
+    CodeResponseSchema,
     PlanSchema,
     call_architect,
     call_coder_for_task,
@@ -186,7 +186,7 @@ def get_prompt_interactively(history: list[str]) -> str:
 
 
 def validate_llm_result(
-    result: LLMResponseSchema,
+    result: CodeResponseSchema,
     config: Config,
 ) -> tuple[str, list[dict[str, str]]]:
     validated_changes: list[dict[str, str]] = []

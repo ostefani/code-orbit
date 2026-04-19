@@ -1,6 +1,6 @@
 from agent.config import Config
 from agent.events import AgentEvent, EventBus, RunProposalReadyPayload
-from agent.llm import ChangeSchema, LLMResponseSchema, PlanSchema, PlanTaskSchema
+from agent.llm import CodeChangeSchema, CodeResponseSchema, PlanSchema, PlanTaskSchema
 from main import build_working_context, open_plan_in_editor, validate_llm_result
 
 
@@ -14,9 +14,9 @@ def test_config_rejects_impossible_context_budget() -> None:
 
 
 def test_validate_llm_result_rejects_delete_by_default() -> None:
-    result = LLMResponseSchema(
+    result = CodeResponseSchema(
         summary="Remove file",
-        changes=[ChangeSchema(path="danger.txt", action="delete")],
+        changes=[CodeChangeSchema(path="danger.txt", action="delete")],
     )
 
     config = Config()
@@ -30,11 +30,11 @@ def test_validate_llm_result_rejects_delete_by_default() -> None:
 
 
 def test_validate_llm_result_rejects_duplicate_paths() -> None:
-    result = LLMResponseSchema(
+    result = CodeResponseSchema(
         summary="Conflicting changes",
         changes=[
-            ChangeSchema(path="same.py", action="update", content="a"),
-            ChangeSchema(path="same.py", action="create", content="b"),
+            CodeChangeSchema(path="same.py", action="update", content="a"),
+            CodeChangeSchema(path="same.py", action="create", content="b"),
         ],
     )
 
@@ -52,12 +52,12 @@ def test_validate_llm_result_accepts_valid_changes() -> None:
     result = {
         "summary": "Update files",
         "changes": [
-            ChangeSchema(path="src/app.py", action="update", content="print('ok')"),
-            ChangeSchema(path="src/new.py", action="create", content="print('new')"),
+            CodeChangeSchema(path="src/app.py", action="update", content="print('ok')"),
+            CodeChangeSchema(path="src/new.py", action="create", content="print('new')"),
         ],
     }
 
-    summary, changes = validate_llm_result(LLMResponseSchema(**result), Config())
+    summary, changes = validate_llm_result(CodeResponseSchema(**result), Config())
 
     assert summary == "Update files"
     assert changes == [
@@ -67,10 +67,10 @@ def test_validate_llm_result_accepts_valid_changes() -> None:
 
 
 def test_validate_llm_result_rejects_missing_content() -> None:
-    result = LLMResponseSchema.model_construct(
+    result = CodeResponseSchema.model_construct(
         summary="Update files",
         changes=[
-            ChangeSchema.model_construct(
+            CodeChangeSchema.model_construct(
                 path="src/app.py",
                 action="update",
                 content=None,
@@ -106,7 +106,7 @@ def test_run_proposal_ready_event_can_be_published() -> None:
 
 def test_change_schema_requires_content_for_create_and_update() -> None:
     try:
-        ChangeSchema(path="src/app.py", action="update")
+        CodeChangeSchema(path="src/app.py", action="update")
     except Exception as exc:
         assert "requires field 'content'" in str(exc)
     else:
@@ -115,7 +115,7 @@ def test_change_schema_requires_content_for_create_and_update() -> None:
 
 def test_change_schema_rejects_content_for_delete() -> None:
     try:
-        ChangeSchema(path="danger.txt", action="delete", content="nope")
+        CodeChangeSchema(path="danger.txt", action="delete", content="nope")
     except Exception as exc:
         assert "must not include 'content'" in str(exc)
     else:
@@ -124,7 +124,7 @@ def test_change_schema_rejects_content_for_delete() -> None:
 
 def test_change_schema_rejects_path_traversal() -> None:
     try:
-        ChangeSchema(
+        CodeChangeSchema(
             path="../escape.txt",
             action="update",
             content="print('escape')",
@@ -137,7 +137,7 @@ def test_change_schema_rejects_path_traversal() -> None:
 
 def test_change_schema_rejects_absolute_path() -> None:
     try:
-        ChangeSchema(
+        CodeChangeSchema(
             path="/etc/passwd",
             action="update",
             content="print('owned')",

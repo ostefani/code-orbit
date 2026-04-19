@@ -140,9 +140,6 @@ class CodeResponseSchema(BaseModel):
     changes: list[CodeChangeSchema] = Field(default_factory=list)
 
 
-ChangeSchema = CodeChangeSchema
-LLMResponseSchema = CodeResponseSchema
-
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
 
@@ -261,14 +258,3 @@ async def call_coder(
         on_chunk=on_chunk,
     )
 
-
-async def call_llm(
-    prompt: str,
-    context: str,
-    config: Config,
-    on_chunk: Callable[[str], None] | None = None,
-) -> CodeResponseSchema:
-    """Backward-compatible alias kept for callers that still use the old API."""
-    raise NotImplementedError(
-        "call_llm() has been replaced by call_architect() and call_coder()."
-    )
