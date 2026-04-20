@@ -3,7 +3,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import Config
+from .config import Config, require_chat_context_window
 from .constants import (
     CONFIG_HINTS,
     LOW_VALUE_DIRS,
@@ -13,11 +13,11 @@ from .constants import (
     TEST_HINTS,
 )
 from .embeddings import (
-    EmbeddingClient,
+    EmbeddingAdapter,
     EmbeddingSyncResult,
     build_embedding_index,
+    create_embedding_adapter,
     default_embedding_cache_path,
-    OpenAICompatibleEmbeddingClient,
 )
 from .events import ContextWarningPayload, EventBus
 from .llm import SYSTEM_PROMPT
@@ -90,10 +90,6 @@ def _safe_candidate(root: Path, path: Path) -> FileCandidate | None:
 def _extract_prompt_terms(prompt: str) -> set[str]:
     words = re.findall(r"[a-zA-Z0-9_.-]+", prompt.lower())
     return {word for word in words if len(word) > 1 and word not in STOPWORDS}
-
-
-def _score_file_entry(entry: FileEntry, prompt: str) -> float:
-    return _score_path(entry.path, entry.tokens, prompt)
 
 
 def _score_path(
@@ -183,25 +179,23 @@ def _compute_context_budget(
     )
     scaffold_result = count_tokens(scaffold, config)
     scaffold_tokens = scaffold_result.count
+    context_window = require_chat_context_window(config)
 
     if config.tokenizer_backend == "estimate":
         # Estimate backend is intentionally conservative.
-        safety_margin = max(128, int(config.max_context_tokens * 0.10))
+        safety_margin = max(128, int(context_window * 0.10))
     else:
         # Exact tokenizers need only a small buffer for drift.
         safety_margin = 64
 
     file_budget = (
-        config.max_context_tokens
-        - config.max_response_tokens
-        - scaffold_tokens
-        - safety_margin
+        context_window - config.max_response_tokens - scaffold_tokens - safety_margin
     )
     available_file_tokens = max(0, file_budget)
 
     warnings = list(scaffold_result.warnings)
     if available_file_tokens == 0:
-        if config.max_response_tokens >= config.max_context_tokens:
+        if config.max_response_tokens >= context_window:
             warnings.append(
                 "max_response_tokens leaves no room for file context. "
                 "Lower max_response_tokens or raise max_context_tokens."
@@ -216,7 +210,7 @@ def _compute_context_budget(
 
     return (
         ContextBudgetBreakdown(
-            context_window_tokens=config.max_context_tokens,
+            context_window_tokens=context_window,
             response_reserve_tokens=config.max_response_tokens,
             scaffold_tokens=scaffold_tokens,
             safety_margin_tokens=safety_margin,
@@ -231,7 +225,7 @@ async def build_context_async(
     prompt: str,
     config: Config,
     *,
-    embedding_client: EmbeddingClient | None = None,
+    embedding_client: EmbeddingAdapter | None = None,
     cache_path: Path | None = None,
     event_bus: EventBus | None = None,
 ) -> ContextBuildResult:
@@ -268,12 +262,12 @@ async def build_context_async(
             candidates.append(candidate)
 
     semantic_scores: dict[str, float] = {}
-    semantic_client = embedding_client or OpenAICompatibleEmbeddingClient(
-        api_base=config.embedding_api_base,
-        api_key=config.api_key,
-        model=config.embedding_model,
-    )
     owns_semantic_client = embedding_client is None
+    if embedding_client is None:
+        semantic_client = await create_embedding_adapter(config)
+    else:
+        semantic_client = embedding_client
+        await semantic_client.validate()
 
     try:
         try:
@@ -315,9 +309,9 @@ async def build_context_async(
             prompt,
             semantic_score=0.0,
         )
-        blended_score = lexical_score + max(
-            0.0, min(1.0, semantic_score)
-        ) * _SEMANTIC_SCORE_WEIGHT
+        blended_score = (
+            lexical_score + max(0.0, min(1.0, semantic_score)) * _SEMANTIC_SCORE_WEIGHT
+        )
         scored_candidates.append(
             (blended_score, candidate, lexical_score, semantic_score)
         )

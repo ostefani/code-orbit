@@ -4,7 +4,7 @@ from collections.abc import Iterable, Sequence
 
 import numpy as np
 
-from .client import EmbeddingClient
+from .adapters import EmbeddingAdapter
 from .types import EmbeddingSearchResult, FileEmbeddingRecord
 
 
@@ -122,7 +122,7 @@ class VectorStore:
     async def search_text(
         self,
         text: str,
-        client: EmbeddingClient,
+        client: EmbeddingAdapter,
         top_k: int = 10,
     ) -> list[EmbeddingSearchResult]:
         vector = (await client.embed([text]))[0]

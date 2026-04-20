@@ -11,7 +11,12 @@ from agent.events import (
 )
 from agent.llm import CodeResponseSchema, call_coder_for_task
 
-from ._state import WorkflowRuntime, WorkflowState, reset_execution_state
+from ._state import (
+    WorkflowRuntime,
+    WorkflowState,
+    require_approved_plan,
+    reset_execution_state,
+)
 
 ALLOWED_ACTIONS = {"create", "update", "delete"}
 MAX_REPLAN_ATTEMPTS = 3
@@ -109,7 +114,7 @@ async def run_execution_stage(
     runtime: WorkflowRuntime, event_bus: EventBus
 ) -> WorkflowState:
     assert runtime.context_result is not None
-    assert runtime.approved_plan is not None
+    approved_plan = require_approved_plan(runtime)
 
     event_bus.publish(AgentEvent(
         name="state.changed",
@@ -122,13 +127,13 @@ async def run_execution_stage(
     runtime.task_summaries = []
     runtime.working_context = runtime.context_result.context
 
-    for index, task in enumerate(runtime.approved_plan.tasks, 1):
+    for index, task in enumerate(approved_plan.tasks, 1):
         event_bus.publish(AgentEvent(
             name="state.changed",
             state=WorkflowState.EXECUTING.value,
             message=(
                 f"Generating file replacements for task {index}/"
-                f"{len(runtime.approved_plan.tasks)}."
+                f"{len(approved_plan.tasks)}."
             ),
             payload=StateChangedPayload(),
         ))
@@ -140,7 +145,7 @@ async def run_execution_stage(
                 console=runtime.console,
             )
             task_id = progress.add_task(
-                f"Coder is streaming task {index}/{len(runtime.approved_plan.tasks)}...",
+                f"Coder is streaming task {index}/{len(approved_plan.tasks)}...",
                 total=None,
             )
             chunk_count = 0
@@ -154,16 +159,17 @@ async def run_execution_stage(
                     task_id,
                     description=(
                         f"Coder is streaming task {_i}/"
-                        f"{len(runtime.approved_plan.tasks)}... ({chunk_count} chunks)"
+                        f"{len(approved_plan.tasks)}... ({chunk_count} chunks)"
                     ),
                 )
 
             with Live(progress, console=runtime.console, refresh_per_second=12):
                 result = await call_coder_for_task(
-                    runtime.approved_plan,
+                    approved_plan,
                     task,
                     runtime.working_context,
                     runtime.config,
+                    chat_adapter=runtime.chat_adapter,
                     on_chunk=on_chunk,
                 )
         except Exception as exc:
@@ -218,12 +224,12 @@ async def run_execution_stage(
 
         if changes:
             runtime.console.print(
-                f"[green]✓[/green] Task {index}/{len(runtime.approved_plan.tasks)}: "
+                f"[green]✓[/green] Task {index}/{len(approved_plan.tasks)}: "
                 f"{summary} ({len(changes)} file(s))"
             )
         else:
             runtime.console.print(
-                f"[yellow]⚠[/yellow] Task {index}/{len(runtime.approved_plan.tasks)}: "
+                f"[yellow]⚠[/yellow] Task {index}/{len(approved_plan.tasks)}: "
                 f"No changes required for '{task.goal}'"
             )
 
@@ -236,7 +242,7 @@ async def run_execution_stage(
         ))
         return WorkflowState.COMPLETED
 
-    runtime.final_summary = runtime.approved_plan.summary
+    runtime.final_summary = approved_plan.summary
     if len(runtime.task_summaries) == 1:
         runtime.final_summary = runtime.task_summaries[0]
 

@@ -23,11 +23,25 @@ class Config:
     api_key: str = "dummy"
     model: str = "local"
 
+    # Chat provider for planning / code generation
+    chat_provider: str = "openai"
+    chat_api_base: str = "http://localhost:8081/v1"
+    chat_api_key: str = "dummy"
+    chat_model: str = "local"
+    chat_context_window: int | None = None
+    chat_streaming: bool = True
+    chat_probe_on_startup: bool = False
+    chat_provider_options: dict[str, object] = field(default_factory=dict)
+
     # Embeddings for semantic retrieval / RAG
+    embedding_provider: str = "openai"
     embedding_api_base: str = "http://localhost:8081/v1"
+    embedding_api_key: str = ""
     embedding_model: str = "nomic-embed-text"
     embedding_batch_size: int = 16
     embedding_max_concurrency: int = 4
+    embedding_probe_on_startup: bool = False
+    embedding_provider_options: dict[str, object] = field(default_factory=dict)
 
     max_context_tokens: int = 16384
     max_response_tokens: int = 4096
@@ -76,6 +90,17 @@ class Config:
     allow_delete: bool = False
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "embedding_provider",
+            (self.embedding_provider or "openai").strip().lower(),
+        )
+        object.__setattr__(
+            self,
+            "chat_provider",
+            (self.chat_provider or "openai").strip().lower(),
+        )
+
         patterns = tuple(self.ignore_patterns)
         if ".code-orbit" not in patterns:
             patterns = patterns + (".code-orbit",)
@@ -94,6 +119,12 @@ class Config:
                 "max_response_tokens must be smaller than max_context_tokens "
                 "so there is room for file context."
             )
+        chat_context_window = self.chat_context_window
+        if chat_context_window is None:
+            chat_context_window = self.max_context_tokens
+            object.__setattr__(self, "chat_context_window", chat_context_window)
+        if chat_context_window <= 0:
+            raise ValueError("chat_context_window must be greater than zero.")
 
     @classmethod
     def load(
@@ -160,3 +191,10 @@ class Config:
             config=cls(**valid_params),
             messages=tuple(messages),
         )
+
+
+def require_chat_context_window(config: Config) -> int:
+    chat_context_window = config.chat_context_window
+    if chat_context_window is None:
+        raise ValueError("chat_context_window must be initialized.")
+    return chat_context_window

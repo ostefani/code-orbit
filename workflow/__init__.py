@@ -4,6 +4,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.panel import Panel
 
+from agent.chat import create_chat_adapter
 from agent.config import Config
 from agent.context import get_file_tree
 from agent.events import (
@@ -85,14 +86,14 @@ async def run_workflow(
         name="run.started",
         state="starting",
         message="Agent run started.",
-        payload=RunStartedPayload(target_dir=target_path, model=config.model),
+        payload=RunStartedPayload(target_dir=target_path, model=config.chat_model),
     ))
 
     console_obj.print(
         Panel.fit(
             f"[bold blue]Code Orbit[/bold blue]\n"
             f"[dim]Target :[/dim] [green]{target_path}[/green]\n"
-            f"[dim]Model  :[/dim] [magenta]{config.api_base} ({config.model})[/magenta]\n"
+            f"[dim]Model  :[/dim] [magenta]{config.chat_api_base} ({config.chat_model})[/magenta]\n"
             f"[dim]Prompt :[/dim] [yellow]{prompt}[/yellow]",
             title="🔧 settings",
             border_style="blue",
@@ -115,6 +116,17 @@ async def run_workflow(
         config=config,
         console=console_obj,
     )
+    try:
+        runtime.chat_adapter = await create_chat_adapter(config)
+    except Exception as exc:
+        event_bus.publish(AgentEvent(
+            name="run.failed",
+            level="error",
+            state="loading_chat",
+            message=str(exc),
+            payload=EmptyPayload(),
+        ))
+        raise WorkflowError(str(exc)) from exc
     state = WorkflowState.BUILDING_CONTEXT
     try:
         while state not in {WorkflowState.COMPLETED, WorkflowState.FAILED}:
@@ -150,3 +162,5 @@ async def run_workflow(
     finally:
         if runtime is not None and runtime.plan_path is not None:
             runtime.plan_path.unlink(missing_ok=True)
+        if runtime is not None and runtime.chat_adapter is not None:
+            await runtime.chat_adapter.aclose()

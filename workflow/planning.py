@@ -88,6 +88,7 @@ async def run_planning_stage(
                 prompt,
                 runtime.context_result.context,
                 runtime.config,
+                chat_adapter=runtime.chat_adapter,
                 on_chunk=on_plan_chunk,
             )
     except Exception as exc:

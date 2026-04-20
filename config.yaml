@@ -2,11 +2,25 @@
 max_context_tokens: 16384
 max_response_tokens: 4096
 
+# Chat provider for planning / code generation
+chat_provider: openai
+chat_api_base: 'http://localhost:8081/v1'
+chat_api_key: dummy
+chat_model: local
+chat_context_window: 16384
+chat_streaming: true
+chat_probe_on_startup: false
+chat_provider_options: {}
+
 # Embeddings for semantic retrieval / RAG
+embedding_provider: openai
 embedding_api_base: 'http://localhost:8081/v1'
+embedding_api_key: ''
 embedding_model: 'nomic-embed-text'
 embedding_batch_size: 16
 embedding_max_concurrency: 4
+embedding_probe_on_startup: false
+embedding_provider_options: {}
 
 # Profiles: select with --profile / -P
 # 'default_profile' is used when no --profile flag is passed.
@@ -17,20 +31,30 @@ profiles:
         api_base: 'http://localhost:11434/v1' # Default Ollama port
         model: 'qwen2.5-coder:32b' # Change to your local model name
         max_context_tokens: 32768
+        chat_api_base: 'http://localhost:11434/v1'
+        chat_model: 'qwen2.5-coder:32b'
+        chat_context_window: 32768
     lm-studio:
         api_base: 'http://localhost:1234/v1' # Default LM Studio port
         model: 'model-identifier-here'
         max_context_tokens: 32768
+        chat_api_base: 'http://localhost:1234/v1'
+        chat_model: 'model-identifier-here'
+        chat_context_window: 32768
     gpt-oss-20:
         model: 'gpt-oss-20'
         max_context_tokens: 32768
         tokenizer_backend: 'tokenizers_json'
         tokenizer_model_path: ~/.llamacpp_models/ggufs/gpt-oss-20b/tokenizer.json
+        chat_model: 'gpt-oss-20'
+        chat_context_window: 32768
     qwen-coder:
         model: 'qwen-coder'
         max_context_tokens: 32768
         tokenizer_backend: 'tokenizers_json'
         tokenizer_model_path: ~/.llamacpp_models/ggufs/Qwen3-Coder-Instruct-30b/tokenizer.json
+        chat_model: 'qwen-coder'
+        chat_context_window: 32768
     gemma-e4b:
         model: 'gemma-4-E4B-it-f16.gguf'
         max_context_tokens: 32768
@@ -38,6 +62,8 @@ profiles:
         tokenizer_backend: tokenizers_json
         tokenizer_model_path: ~/.llamacpp_models/ggufs/gemma-4-E4B-it/tokenizer.json
         auto_commit: true
+        chat_model: 'gemma-4-E4B-it-f16.gguf'
+        chat_context_window: 32768
     gemma-4-26B:
         model: 'gemma-4-26B'
         max_context_tokens: 32768
@@ -45,8 +71,20 @@ profiles:
         tokenizer_backend: tokenizers_json
         tokenizer_model_path: ~/.llamacpp_models/ggufs/gemma-4-26B-A4B-it/tokenizer.json
         auto_commit: true,
+        chat_model: 'gemma-4-26B'
+        chat_context_window: 32768
         # embedding_api_base: 'http://localhost:8082/v1'
         # embedding_model: 'local'
+    openai:
+        api_base: https://api.openai.com/v1
+        api_key: <key>
+        model: o3
+        max_context_tokens: 32768
+        max_response_tokens: 16384
+        chat_api_base: https://api.openai.com/v1
+        chat_api_key: <key>
+        chat_model: o3
+        chat_context_window: 32768
 
 # Pause and show diffs before applying changes
 interactive: true

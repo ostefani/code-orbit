@@ -4,13 +4,18 @@ from agent.events import AgentEvent, EventBus, StateChangedPayload
 from agent.llm import format_plan_roadmap
 from agent.patcher import apply_changes, git_commit, preview_changes
 
-from ._state import WorkflowRuntime, WorkflowState, reset_execution_state
+from ._state import (
+    WorkflowRuntime,
+    WorkflowState,
+    require_approved_plan,
+    reset_execution_state,
+)
 
 
 def run_review_diff_stage(
     runtime: WorkflowRuntime, event_bus: EventBus
 ) -> WorkflowState:
-    assert runtime.approved_plan is not None
+    require_approved_plan(runtime)
 
     event_bus.publish(AgentEvent(
         name="state.changed",
@@ -41,6 +46,8 @@ def run_review_diff_stage(
 def run_applying_stage(
     runtime: WorkflowRuntime, event_bus: EventBus
 ) -> WorkflowState:
+    approved_plan = require_approved_plan(runtime)
+
     event_bus.publish(AgentEvent(
         name="state.changed",
         state=WorkflowState.APPLYING.value,
@@ -49,7 +56,7 @@ def run_applying_stage(
     ))
     runtime.console.print("\n[bold green]📝 Applying changes...[/bold green]")
     affected = apply_changes(runtime.target_dir, runtime.all_changes, event_bus=event_bus)
-    runtime.final_summary = runtime.final_summary or runtime.approved_plan.summary
+    runtime.final_summary = runtime.final_summary or approved_plan.summary
     runtime.affected_files = affected
     return WorkflowState.COMMITTING if runtime.config.auto_commit and affected else WorkflowState.COMPLETED
 
@@ -57,6 +64,7 @@ def run_applying_stage(
 def run_committing_stage(
     runtime: WorkflowRuntime, event_bus: EventBus
 ) -> WorkflowState:
+    approved_plan = require_approved_plan(runtime)
     affected = runtime.affected_files
     if affected:
         event_bus.publish(AgentEvent(
@@ -67,7 +75,7 @@ def run_committing_stage(
         ))
         git_commit(
             runtime.target_dir,
-            f"{runtime.final_summary}\n\n{format_plan_roadmap(runtime.approved_plan)}",
+            f"{runtime.final_summary}\n\n{format_plan_roadmap(approved_plan)}",
             affected,
             event_bus=event_bus,
         )

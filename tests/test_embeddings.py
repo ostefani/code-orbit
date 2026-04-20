@@ -32,6 +32,12 @@ class FakeEmbeddingClient:
                 vectors.append((0.5, 0.5))
         return vectors
 
+    async def validate(self) -> None:
+        return None
+
+    async def probe(self) -> None:
+        return None
+
 
 def _write_codebase(root: Path) -> None:
     (root / "src").mkdir()

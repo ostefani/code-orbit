@@ -43,6 +43,22 @@ def test_config_defaults_include_embedding_settings() -> None:
     assert config.embedding_api_base.startswith("http://localhost:")
     assert config.embedding_batch_size == 16
     assert config.embedding_max_concurrency == 4
+    assert config.chat_model == "local"
+    assert config.chat_api_base.startswith("http://localhost:")
+    assert config.chat_context_window == 16384
+    assert config.chat_streaming is True
+
+
+def test_config_derives_chat_context_window_from_context_budget() -> None:
+    config = Config(max_context_tokens=8192)
+
+    assert config.chat_context_window == 8192
+
+
+def test_config_preserves_explicit_chat_context_window() -> None:
+    config = Config(max_context_tokens=8192, chat_context_window=4096)
+
+    assert config.chat_context_window == 4096
 
 
 def test_config_is_immutable_after_construction() -> None:

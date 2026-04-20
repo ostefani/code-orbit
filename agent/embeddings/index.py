@@ -11,8 +11,9 @@ from .cache import (
     _legacy_embedding_cache_path,
     default_embedding_cache_path,
 )
+from .adapters import EmbeddingAdapter
 from .chunking import chunk_file
-from .client import EmbeddingClient, OpenAICompatibleEmbeddingClient
+from .factory import create_embedding_adapter
 from .discovery import _read_file_bytes, iter_code_files
 from .store import VectorStore
 from .types import (
@@ -23,7 +24,7 @@ from .types import (
 
 
 @runtime_checkable
-class _ClosableEmbeddingClient(Protocol):
+class _ClosableEmbeddingAdapter(Protocol):
     async def aclose(self) -> None: ...
 
 
@@ -41,7 +42,7 @@ async def build_embedding_index(
     config: Config,
     *,
     cache_path: Path | None = None,
-    client: EmbeddingClient | None = None,
+    client: EmbeddingAdapter | None = None,
     batch_size: int | None = None,
 ) -> EmbeddingSyncResult:
     root_path = Path(root).resolve()
@@ -60,11 +61,11 @@ async def build_embedding_index(
         )
 
     owns_client = client is None
-    embedding_client = client or OpenAICompatibleEmbeddingClient(
-        api_base=config.embedding_api_base,
-        api_key=config.api_key,
-        model=config.embedding_model,
-    )
+    if client is None:
+        embedding_client = await create_embedding_adapter(config)
+    else:
+        embedding_client = client
+        await embedding_client.validate()
     effective_batch_size = max(1, batch_size or config.embedding_batch_size)
     max_concurrency = max(1, config.embedding_max_concurrency)
 
@@ -161,7 +162,7 @@ async def build_embedding_index(
             chunk_count=sum(len(record.chunks) for record in cache.files.values()),
         )
     finally:
-        if owns_client and isinstance(embedding_client, _ClosableEmbeddingClient):
+        if owns_client and isinstance(embedding_client, _ClosableEmbeddingAdapter):
             await embedding_client.aclose()
 
 
@@ -170,7 +171,7 @@ def build_embedding_sync(
     config: Config,
     *,
     cache_path: Path | None = None,
-    client: EmbeddingClient | None = None,
+    client: EmbeddingAdapter | None = None,
     batch_size: int | None = None,
 ) -> EmbeddingSyncResult:
     return asyncio.run(

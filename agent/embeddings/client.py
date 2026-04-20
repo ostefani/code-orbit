@@ -1,55 +1,44 @@
-import inspect
+import warnings
 from collections.abc import Sequence
-from typing import Any, Protocol
 
-
-class EmbeddingClient(Protocol):
-    async def embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]: ...
-
-
-class _EmbeddingVectorsAPI(Protocol):
-    async def create(self, *, model: str, input: list[str]) -> Any: ...
-
-
-class _EmbeddingClientAPI(Protocol):
-    @property
-    def embeddings(self) -> _EmbeddingVectorsAPI: ...
+from .adapters import (
+    EmbeddingAdapter,
+    EmbeddingAdapter as EmbeddingClient,
+    EmbeddingProviderConfig,
+)
 
 
 class OpenAICompatibleEmbeddingClient:
+    provider_name = "openai"
+
     def __init__(self, api_base: str, api_key: str, model: str) -> None:
-        self.api_base = api_base.rstrip("/")
-        self.api_key = api_key
-        self.model = model
-        self._client: _EmbeddingClientAPI | None = None
+        warnings.warn(
+            "OpenAICompatibleEmbeddingClient is deprecated; use OpenAIEmbeddingAdapter via the provider factory.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        from .providers.openai import OpenAIEmbeddingAdapter
 
-    def _get_client(self) -> _EmbeddingClientAPI:
-        client = self._client
-        if client is None:
-            try:
-                from openai import AsyncOpenAI
-            except ImportError as exc:  # pragma: no cover - dependency issue
-                raise RuntimeError(
-                    "The 'openai' package is required for embedding generation."
-                ) from exc
-
-            client = AsyncOpenAI(base_url=self.api_base, api_key=self.api_key)
-            self._client = client
-        return client
+        self._adapter = OpenAIEmbeddingAdapter(
+            EmbeddingProviderConfig(
+                provider="openai",
+                api_base=api_base,
+                api_key=api_key,
+                model=model,
+            )
+        )
 
     async def embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
-        client = self._get_client()
-        response = await client.embeddings.create(model=self.model, input=list(texts))
-        return [tuple(item.embedding) for item in response.data]
+        return await self._adapter.embed(texts)
 
     async def aclose(self) -> None:
-        client = self._client
-        if client is None:
-            return
+        await self._adapter.aclose()
 
-        close = getattr(client, "aclose", None) or getattr(client, "close", None)
-        if close is not None:
-            result = close()
-            if inspect.isawaitable(result):
-                await result
-        self._client = None
+    async def validate(self) -> None:
+        await self._adapter.validate()
+
+    async def probe(self) -> None:
+        await self._adapter.probe()
+
+
+__all__ = ["EmbeddingAdapter", "EmbeddingClient", "OpenAICompatibleEmbeddingClient"]
