@@ -23,6 +23,9 @@ your prompt
 build context          ← walks your directory, respects .gitignore-style patterns
     │                    fits files within your model's context window
     ▼
+chat provider         ← provider-selected chat adapter powers planning/editing
+    │
+    ▼
 architect plan        ← high-level JSON plan with files, goals, and reasoning
     │
     ▼
@@ -72,12 +75,19 @@ llama-server \
 # 5. Copy and edit config
 cp config.yaml config.local.yaml   # optional — config.yaml works as-is
 
-# 6. Configure embeddings (Optional)
-Embeddings now go through a provider adapter selected from config. The default
-provider is still `openai`, but the selection point is isolated behind the
-factory layer so orchestration code does not need provider-specific branches.
+# 6. Configure chat and embeddings (Optional)
+Chat and embeddings both go through provider adapters selected from config.
+The selection points are isolated behind factory layers so orchestration code
+does not need provider-specific branches.
 
 ```yaml
+chat_provider: openai
+chat_api_base: http://localhost:8081/v1
+chat_api_key: dummy
+chat_model: local
+chat_context_window: 16384
+chat_streaming: true
+
 embedding_provider: openai
 embedding_api_base: http://localhost:8081/v1
 embedding_api_key: dummy
@@ -87,7 +97,10 @@ embedding_provider_options:
   timeout: 30
 ```
 
-`embedding_provider_options` is where provider-specific SDK settings belong.
+`chat_*` settings control the provider used for planning and code generation.
+`embedding_*` settings control semantic retrieval. Provider-specific SDK
+settings belong in the matching `*_provider_options` mapping.
+
 Set `embedding_probe_on_startup: true` if you want Code Orbit to make one live
 embedding request at startup to verify credentials and reachability. Leave it
 off to keep startup cheap and let the first semantic operation hit the backend.
@@ -98,12 +111,12 @@ Code Orbit still works with any OpenAI-compatible local server.
 **Ollama**
 1. Start Ollama and pull your model.
 2. Update `config.yaml` or use the `--profile ollama` flag.
-3. Set `api_base: http://localhost:11434/v1`.
+3. Set `chat_api_base: http://localhost:11434/v1` and `chat_model` to the model name you pulled.
 
 **LM Studio**
 1. Open LM Studio and start the "Local Server".
-2. Set `api_base: http://localhost:1234/v1` in your config.
-3. Use the model identifier provided by LM Studio in the `model` field.
+2. Set `chat_api_base: http://localhost:1234/v1` in your config.
+3. Use the model identifier provided by LM Studio in the `chat_model` field.
 ```
 
 ## Usage
@@ -152,6 +165,12 @@ Edit `config.yaml`:
 api_base: 'http://localhost:8080/v1' # llama.cpp server
 max_context_tokens: 16384 # match your model's context size
 max_response_tokens: 4096 # reserve room for the model's reply
+chat_provider: openai # chat provider adapter
+chat_api_base: 'http://localhost:8080/v1'
+chat_api_key: 'dummy'
+chat_model: 'local'
+chat_context_window: 16384
+chat_streaming: true
 interactive: true # show diffs, ask before applying
 auto_commit: false # git commit after applying
 embedding_provider: openai # embeddings provider adapter
@@ -160,6 +179,7 @@ embedding_api_key: '' # leave empty to reuse api_key
 embedding_model: 'nomic-embed-text'
 embedding_probe_on_startup: false # set true to probe the backend once at startup
 embedding_provider_options: {} # provider-specific SDK kwargs
+chat_provider_options: {} # provider-specific SDK kwargs
 ```
 
 For personal overrides without affecting git, use `config.local.yaml` (already in `.gitignore`).
@@ -220,7 +240,8 @@ code-orbit/
 ├── agent/
 │   ├── config.py        # Config dataclass, YAML loading
 │   ├── context.py       # Directory walker, context builder
-│   ├── llm.py           # llama.cpp API client
+│   ├── chat/            # Provider-agnostic chat adapters and factory
+│   ├── llm.py           # Structured planning/coder wrappers on chat adapters
 │   └── patcher.py       # Diff preview, file writer, git commit
 ├── workflow/
 │   ├── __init__.py      # workflow entrypoint and orchestration

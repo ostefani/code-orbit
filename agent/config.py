@@ -23,6 +23,15 @@ class Config:
     api_key: str = "dummy"
     model: str = "local"
 
+    # Chat provider for planning / code generation
+    chat_provider: str = "openai"
+    chat_api_base: str = "http://localhost:8081/v1"
+    chat_api_key: str = "dummy"
+    chat_model: str = "local"
+    chat_context_window: int = 16384
+    chat_streaming: bool = True
+    chat_provider_options: dict[str, object] = field(default_factory=dict)
+
     # Embeddings for semantic retrieval / RAG
     embedding_provider: str = "openai"
     embedding_api_base: str = "http://localhost:8081/v1"
@@ -85,6 +94,11 @@ class Config:
             "embedding_provider",
             (self.embedding_provider or "openai").strip().lower(),
         )
+        object.__setattr__(
+            self,
+            "chat_provider",
+            (self.chat_provider or "openai").strip().lower(),
+        )
 
         patterns = tuple(self.ignore_patterns)
         if ".code-orbit" not in patterns:
@@ -104,6 +118,10 @@ class Config:
                 "max_response_tokens must be smaller than max_context_tokens "
                 "so there is room for file context."
             )
+        if self.chat_context_window == 16384 and self.max_context_tokens != 16384:
+            object.__setattr__(self, "chat_context_window", self.max_context_tokens)
+        if self.chat_context_window <= 0:
+            raise ValueError("chat_context_window must be greater than zero.")
 
     @classmethod
     def load(

@@ -2,7 +2,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Literal, TypeVar
 
-from openai import AsyncOpenAI
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -12,6 +11,7 @@ from pydantic import (
     model_validator,
 )
 
+from .chat import ChatMessage, run_chat, stream_chat
 from .config import Config
 
 ARCHITECT_SYSTEM_PROMPT = """\
@@ -164,33 +164,32 @@ async def _call_structured_llm(
     parser: Callable[[str], ModelT],
     on_chunk: Callable[[str], None] | None = None,
 ) -> ModelT:
-    client = AsyncOpenAI(
-        base_url=config.api_base,
-        api_key=config.api_key,
-        timeout=60.0,
+    messages = (
+        ChatMessage(role="system", content=system_prompt),
+        ChatMessage(role="user", content=user_message),
     )
 
-    stream = await client.chat.completions.create(
-        model=config.model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
-        ],
-        max_tokens=config.max_response_tokens,
-        temperature=0.2,
-        response_format={"type": "json_object"},
-        stream=True,
-    )
+    if on_chunk is not None and config.chat_streaming:
+        chunks: list[str] = []
+        async for delta in stream_chat(
+            messages,
+            config,
+            max_tokens=config.max_response_tokens,
+            temperature=0.2,
+        ):
+            if delta.content:
+                chunks.append(delta.content)
+                on_chunk(delta.content)
+        content = "".join(chunks).strip()
+    else:
+        response = await run_chat(
+            messages,
+            config,
+            max_tokens=config.max_response_tokens,
+            temperature=0.2,
+        )
+        content = response.content.strip()
 
-    chunks: list[str] = []
-    async for event in stream:
-        delta = event.choices[0].delta.content
-        if isinstance(delta, str) and delta:
-            chunks.append(delta)
-            if on_chunk is not None:
-                on_chunk(delta)
-
-    content = "".join(chunks).strip()
     if not content:
         raise ValueError("Model returned empty content.")
 
@@ -257,4 +256,3 @@ async def call_coder(
         config=config,
         on_chunk=on_chunk,
     )
-

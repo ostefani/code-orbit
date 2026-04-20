@@ -43,6 +43,10 @@ def test_config_defaults_include_embedding_settings() -> None:
     assert config.embedding_api_base.startswith("http://localhost:")
     assert config.embedding_batch_size == 16
     assert config.embedding_max_concurrency == 4
+    assert config.chat_model == "local"
+    assert config.chat_api_base.startswith("http://localhost:")
+    assert config.chat_context_window == 16384
+    assert config.chat_streaming is True
 
 
 def test_config_is_immutable_after_construction() -> None:

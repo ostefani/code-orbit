@@ -61,7 +61,7 @@ async def run_build_context_stage(
             context_window_tokens=(
                 runtime.context_result.budget_breakdown.context_window_tokens
                 if runtime.context_result.budget_breakdown is not None
-                else runtime.config.max_context_tokens
+                else runtime.config.chat_context_window
             ),
             response_reserve_tokens=(
                 runtime.context_result.budget_breakdown.response_reserve_tokens

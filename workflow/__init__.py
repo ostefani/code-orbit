@@ -85,14 +85,14 @@ async def run_workflow(
         name="run.started",
         state="starting",
         message="Agent run started.",
-        payload=RunStartedPayload(target_dir=target_path, model=config.model),
+        payload=RunStartedPayload(target_dir=target_path, model=config.chat_model),
     ))
 
     console_obj.print(
         Panel.fit(
             f"[bold blue]Code Orbit[/bold blue]\n"
             f"[dim]Target :[/dim] [green]{target_path}[/green]\n"
-            f"[dim]Model  :[/dim] [magenta]{config.api_base} ({config.model})[/magenta]\n"
+            f"[dim]Model  :[/dim] [magenta]{config.chat_api_base} ({config.chat_model})[/magenta]\n"
             f"[dim]Prompt :[/dim] [yellow]{prompt}[/yellow]",
             title="🔧 settings",
             border_style="blue",
