@@ -191,3 +191,10 @@ class Config:
             config=cls(**valid_params),
             messages=tuple(messages),
         )
+
+
+def require_chat_context_window(config: Config) -> int:
+    chat_context_window = config.chat_context_window
+    if chat_context_window is None:
+        raise ValueError("chat_context_window must be initialized.")
+    return chat_context_window

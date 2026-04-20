@@ -9,6 +9,7 @@ from agent.events import (
     EventBus,
     StateChangedPayload,
 )
+from agent.config import require_chat_context_window
 
 from ._state import WorkflowRuntime, WorkflowState
 
@@ -57,7 +58,7 @@ async def run_build_context_stage(
         else runtime.config.chat_context_window
     )
     if context_window is None:
-        raise ValueError("chat_context_window must be initialized.")
+        context_window = require_chat_context_window(runtime.config)
 
     event_bus.publish(AgentEvent(
         name="context.summary",

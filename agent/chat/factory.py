@@ -1,7 +1,7 @@
 import importlib
 from collections.abc import Callable
 
-from ..config import Config
+from ..config import Config, require_chat_context_window
 from .adapters import (
     RESERVED_CHAT_PROVIDER_OPTION_KEYS,
     ChatAdapter,
@@ -25,15 +25,12 @@ def build_chat_provider_config(config: Config) -> ChatProviderConfig:
         for key, value in dict(config.chat_provider_options).items()
         if key not in RESERVED_CHAT_PROVIDER_OPTION_KEYS
     }
-    context_window = config.chat_context_window
-    if context_window is None:
-        raise ValueError("chat_context_window must be initialized.")
     return ChatProviderConfig(
         provider=config.chat_provider,
         api_base=config.chat_api_base or config.api_base,
         api_key=config.chat_api_key or config.api_key,
         model=config.chat_model or config.model,
-        context_window=context_window,
+        context_window=require_chat_context_window(config),
         streaming=config.chat_streaming,
         options=options,
     )
