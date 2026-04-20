@@ -103,8 +103,9 @@ embedding_provider_options:
 settings belong in the matching `*_provider_options` mapping.
 
 Set `chat_probe_on_startup: true` if you want Code Orbit to make one live chat
-request at startup to verify credentials and reachability. Leave it off to
-keep startup cheap.
+provider readiness check at startup to verify credentials and reachability.
+For OpenAI-compatible providers this is a live `models.list()` request, so
+leave it off to keep startup cheap.
 Set `embedding_probe_on_startup: true` if you want Code Orbit to make one live
 embedding request at startup to verify credentials and reachability. Leave it
 off to keep startup cheap and let the first semantic operation hit the backend.

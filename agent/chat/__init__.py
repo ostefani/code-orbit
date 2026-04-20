@@ -2,6 +2,7 @@ from .adapters import (
     RESERVED_CHAT_PROVIDER_OPTION_KEYS,
     ChatAdapter,
     ChatProviderConfig,
+    ProbingChatAdapter,
 )
 from .errors import (
     CapabilityNotSupportedError,
@@ -51,6 +52,7 @@ __all__ = [
     "ProviderUnavailableError",
     "ProviderValidationError",
     "RESERVED_CHAT_PROVIDER_OPTION_KEYS",
+    "ProbingChatAdapter",
     "UnsupportedChatProviderError",
     "build_chat_provider_config",
     "build_chat_adapter",

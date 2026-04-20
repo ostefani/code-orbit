@@ -100,8 +100,13 @@ class _ChatAPI(Protocol):
     completions: _ChatCompletionsAPI
 
 
+class _ModelsAPI(Protocol):
+    async def list(self) -> Any: ...
+
+
 class _ChatClientAPI(Protocol):
     chat: _ChatAPI
+    models: _ModelsAPI
 
     async def close(self) -> None: ...
 
@@ -273,17 +278,11 @@ class OpenAIChatAdapter:
                 self.provider_name,
                 "The 'openai' package is required for the OpenAI chat provider.",
             )
-        _coerce_openai_options(self.provider_name, self._config.options)
 
     async def probe(self) -> None:
         client = self._get_client()
         try:
-            await client.chat.completions.create(
-                model=self._config.model,
-                messages=[{"role": "user", "content": "probe"}],
-                max_tokens=1,
-                temperature=0.0,
-            )
+            await client.models.list()
         except Exception as exc:
             raise _map_openai_exception(self.provider_name, exc) from exc
 

@@ -4,7 +4,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.panel import Panel
 
-from agent.chat import build_chat_adapter, probe_chat_adapter, validate_chat_adapter
+from agent.chat import create_chat_adapter
 from agent.config import Config
 from agent.context import get_file_tree
 from agent.events import (
@@ -117,10 +117,7 @@ async def run_workflow(
         console=console_obj,
     )
     try:
-        runtime.chat_adapter = build_chat_adapter(config)
-        await validate_chat_adapter(runtime.chat_adapter)
-        if config.chat_probe_on_startup:
-            await probe_chat_adapter(runtime.chat_adapter)
+        runtime.chat_adapter = await create_chat_adapter(config)
     except Exception as exc:
         event_bus.publish(AgentEvent(
             name="run.failed",

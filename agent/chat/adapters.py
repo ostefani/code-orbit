@@ -1,7 +1,7 @@
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from .types import (
     AdapterCapabilities,
@@ -42,9 +42,12 @@ class ChatAdapter(Protocol):
 
     async def validate(self) -> None: ...
 
-    async def probe(self) -> None: ...
-
     async def aclose(self) -> None: ...
+
+
+@runtime_checkable
+class ProbingChatAdapter(Protocol):
+    async def probe(self) -> None: ...
 
 
 @dataclass(frozen=True)

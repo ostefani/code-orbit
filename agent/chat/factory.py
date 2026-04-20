@@ -6,6 +6,7 @@ from .adapters import (
     RESERVED_CHAT_PROVIDER_OPTION_KEYS,
     ChatAdapter,
     ChatProviderConfig,
+    ProbingChatAdapter,
 )
 from .errors import (
     CapabilityNotSupportedError,
@@ -79,8 +80,14 @@ async def validate_chat_adapter(adapter: ChatAdapter) -> None:
 
 
 async def probe_chat_adapter(adapter: ChatAdapter) -> None:
+    if not isinstance(adapter, ProbingChatAdapter):
+        return
     await adapter.probe()
 
 
 async def create_chat_adapter(config: Config) -> ChatAdapter:
-    return build_chat_adapter(config)
+    adapter = build_chat_adapter(config)
+    await validate_chat_adapter(adapter)
+    if config.chat_probe_on_startup:
+        await probe_chat_adapter(adapter)
+    return adapter

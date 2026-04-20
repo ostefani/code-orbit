@@ -11,7 +11,7 @@ from pydantic import (
     model_validator,
 )
 
-from .chat import ChatGenerationSettings, ChatMessage, run_chat, stream_chat
+from .chat import ChatAdapter, ChatGenerationSettings, ChatMessage, run_chat, stream_chat
 from .config import Config
 
 ARCHITECT_SYSTEM_PROMPT = """\
@@ -162,7 +162,7 @@ async def _call_structured_llm(
     user_message: str,
     config: Config,
     parser: Callable[[str], ModelT],
-    chat_adapter=None,
+    chat_adapter: ChatAdapter | None = None,
     on_chunk: Callable[[str], None] | None = None,
 ) -> ModelT:
     messages = (
@@ -209,7 +209,7 @@ async def call_architect(
     prompt: str,
     context: str,
     config: Config,
-    chat_adapter=None,
+    chat_adapter: ChatAdapter | None = None,
     on_chunk: Callable[[str], None] | None = None,
 ) -> PlanSchema:
     """Ask the architect model for a high-level implementation plan."""
@@ -230,7 +230,7 @@ async def call_coder_for_task(
     task: PlanTaskSchema,
     context: str,
     config: Config,
-    chat_adapter=None,
+    chat_adapter: ChatAdapter | None = None,
     on_chunk: Callable[[str], None] | None = None,
 ) -> CodeResponseSchema:
     """Ask the coder model for exact file replacements for one approved task."""
@@ -254,7 +254,7 @@ async def call_coder(
     plan: PlanSchema,
     context: str,
     config: Config,
-    chat_adapter=None,
+    chat_adapter: ChatAdapter | None = None,
     on_chunk: Callable[[str], None] | None = None,
 ) -> CodeResponseSchema:
     """Backward-compatible wrapper that executes the first approved task."""
