@@ -37,5 +37,6 @@ config.yaml.local
 .idea/
 .DS_Store
 .code-orbit
+.code-orbit-history
 
 INNER_DOC/
