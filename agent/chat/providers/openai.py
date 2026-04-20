@@ -1,7 +1,7 @@
 from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any, ClassVar, Protocol, TypedDict
 
-from httpx import AsyncClient, Timeout, URL
+from httpx import Timeout, URL
 from openai import NOT_GIVEN, NotGiven
 
 from ..adapters import ChatProviderConfig
@@ -13,7 +13,14 @@ from ..errors import (
     ProviderRequestError,
     ProviderUnavailableError,
 )
-from ..types import AdapterCapabilities, ChatDelta, ChatMessage, ChatResponse, ChatUsage
+from ..types import (
+    AdapterCapabilities,
+    ChatDelta,
+    ChatGenerationSettings,
+    ChatMessage,
+    ChatResponse,
+    ChatUsage,
+)
 
 
 try:
@@ -84,6 +91,7 @@ class _ChatCompletionsAPI(Protocol):
         messages: list[dict[str, str]],
         max_tokens: int | None = None,
         temperature: float | None = None,
+        response_format: Any = None,
         stream: bool = False,
     ) -> Any: ...
 
@@ -103,8 +111,6 @@ class OpenAIClientOptions(TypedDict, total=False):
     max_retries: int
     default_headers: Mapping[str, str] | None
     default_query: Mapping[str, object] | None
-    http_client: AsyncClient | None
-    _strict_response_validation: bool
     organization: str | None
     project: str | None
     webhook_secret: str | None
@@ -154,16 +160,6 @@ class OpenAIChatAdapter:
             if "default_query" in openai_options:
                 default_query = openai_options["default_query"]
 
-            http_client: AsyncClient | None = None
-            if "http_client" in openai_options:
-                http_client = openai_options["http_client"]
-
-            strict_response_validation = False
-            if "_strict_response_validation" in openai_options:
-                strict_response_validation = openai_options[
-                    "_strict_response_validation"
-                ]
-
             organization: str | None = None
             if "organization" in openai_options:
                 organization = openai_options["organization"]
@@ -192,8 +188,6 @@ class OpenAIChatAdapter:
                     max_retries=max_retries,
                     default_headers=default_headers,
                     default_query=default_query,
-                    http_client=http_client,
-                    _strict_response_validation=strict_response_validation,
                 )
             except Exception as exc:  # pragma: no cover - constructor validation
                 if isinstance(exc, ProviderError):
@@ -206,22 +200,26 @@ class OpenAIChatAdapter:
         self,
         messages: Sequence[ChatMessage],
         *,
-        max_tokens: int | None = None,
-        temperature: float | None = None,
+        generation: ChatGenerationSettings | None = None,
     ) -> ChatResponse:
         client = self._get_client()
         max_tokens_arg: int | NotGiven | None = NOT_GIVEN
-        if max_tokens is not None:
-            max_tokens_arg = max_tokens
         temperature_arg: float | NotGiven | None = NOT_GIVEN
-        if temperature is not None:
-            temperature_arg = temperature
+        response_format: dict[str, str] | NotGiven | None = NOT_GIVEN
+        if generation is not None:
+            if generation.max_tokens is not None:
+                max_tokens_arg = generation.max_tokens
+            if generation.temperature is not None:
+                temperature_arg = generation.temperature
+            if generation.response_format == "json_object":
+                response_format = {"type": "json_object"}
         try:
             response = await client.chat.completions.create(
                 model=self._config.model,
                 messages=_serialize_messages(messages),
                 max_tokens=max_tokens_arg,
                 temperature=temperature_arg,
+                response_format=response_format,
             )
         except Exception as exc:
             raise _map_openai_exception(self.provider_name, exc) from exc
@@ -231,22 +229,26 @@ class OpenAIChatAdapter:
         self,
         messages: Sequence[ChatMessage],
         *,
-        max_tokens: int | None = None,
-        temperature: float | None = None,
+        generation: ChatGenerationSettings | None = None,
     ) -> AsyncIterator[ChatDelta]:
         client = self._get_client()
         max_tokens_arg: int | NotGiven | None = NOT_GIVEN
-        if max_tokens is not None:
-            max_tokens_arg = max_tokens
         temperature_arg: float | NotGiven | None = NOT_GIVEN
-        if temperature is not None:
-            temperature_arg = temperature
+        response_format: dict[str, str] | NotGiven | None = NOT_GIVEN
+        if generation is not None:
+            if generation.max_tokens is not None:
+                max_tokens_arg = generation.max_tokens
+            if generation.temperature is not None:
+                temperature_arg = generation.temperature
+            if generation.response_format == "json_object":
+                response_format = {"type": "json_object"}
         try:
             stream = await client.chat.completions.create(
                 model=self._config.model,
                 messages=_serialize_messages(messages),
                 max_tokens=max_tokens_arg,
                 temperature=temperature_arg,
+                response_format=response_format,
                 stream=True,
             )
             async for event in stream:
@@ -265,7 +267,25 @@ class OpenAIChatAdapter:
         self._client = None
 
     async def validate(self) -> None:
-        self._get_client()
+        _validate_local_configuration(self._config)
+        if not _OPENAI_AVAILABLE or _AsyncOpenAI is None:
+            raise ProviderUnavailableError(
+                self.provider_name,
+                "The 'openai' package is required for the OpenAI chat provider.",
+            )
+        _coerce_openai_options(self.provider_name, self._config.options)
+
+    async def probe(self) -> None:
+        client = self._get_client()
+        try:
+            await client.chat.completions.create(
+                model=self._config.model,
+                messages=[{"role": "user", "content": "probe"}],
+                max_tokens=1,
+                temperature=0.0,
+            )
+        except Exception as exc:
+            raise _map_openai_exception(self.provider_name, exc) from exc
 
 
 def _serialize_messages(messages: Sequence[ChatMessage]) -> list[dict[str, str]]:
@@ -350,8 +370,6 @@ def _coerce_openai_options(
         "max_retries",
         "default_headers",
         "default_query",
-        "http_client",
-        "_strict_response_validation",
         "organization",
         "project",
         "webhook_secret",
@@ -420,26 +438,6 @@ def _coerce_openai_options(
                 "OpenAI chat option 'default_query' must be a mapping or null.",
             )
 
-    if "http_client" in options:
-        http_client = options["http_client"]
-        if http_client is None or isinstance(http_client, AsyncClient):
-            result["http_client"] = http_client
-        else:
-            raise ProviderConfigurationError(
-                provider,
-                "OpenAI chat option 'http_client' must be an httpx.AsyncClient or null.",
-            )
-
-    if "_strict_response_validation" in options:
-        strict_response_validation = options["_strict_response_validation"]
-        if isinstance(strict_response_validation, bool):
-            result["_strict_response_validation"] = strict_response_validation
-        else:
-            raise ProviderConfigurationError(
-                provider,
-                "OpenAI chat option '_strict_response_validation' must be a boolean.",
-            )
-
     for key in ("organization", "project", "webhook_secret"):
         if key in options:
             value = options[key]
@@ -462,3 +460,27 @@ def _coerce_openai_options(
             )
 
     return result
+
+
+def _validate_local_configuration(config: ChatProviderConfig) -> None:
+    if not config.api_base.strip():
+        raise ProviderConfigurationError(
+            config.provider,
+            "chat_api_base must not be empty.",
+        )
+    if not config.api_key.strip():
+        raise ProviderConfigurationError(
+            config.provider,
+            "chat_api_key must not be empty.",
+        )
+    if not config.model.strip():
+        raise ProviderConfigurationError(
+            config.provider,
+            "chat_model must not be empty.",
+        )
+    if config.context_window <= 0:
+        raise ProviderConfigurationError(
+            config.provider,
+            "chat_context_window must be greater than zero.",
+        )
+    _coerce_openai_options(config.provider, config.options)

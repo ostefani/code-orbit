@@ -3,7 +3,13 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Protocol
 
-from .types import AdapterCapabilities, ChatDelta, ChatMessage, ChatResponse
+from .types import (
+    AdapterCapabilities,
+    ChatDelta,
+    ChatGenerationSettings,
+    ChatMessage,
+    ChatResponse,
+)
 
 
 RESERVED_CHAT_PROVIDER_OPTION_KEYS = {
@@ -24,19 +30,19 @@ class ChatAdapter(Protocol):
         self,
         messages: Sequence[ChatMessage],
         *,
-        max_tokens: int | None = None,
-        temperature: float | None = None,
+        generation: ChatGenerationSettings | None = None,
     ) -> ChatResponse: ...
 
     async def stream(
         self,
         messages: Sequence[ChatMessage],
         *,
-        max_tokens: int | None = None,
-        temperature: float | None = None,
+        generation: ChatGenerationSettings | None = None,
     ) -> AsyncIterator[ChatDelta]: ...
 
     async def validate(self) -> None: ...
+
+    async def probe(self) -> None: ...
 
     async def aclose(self) -> None: ...
 

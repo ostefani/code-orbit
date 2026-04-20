@@ -23,6 +23,13 @@ class ChatUsage:
 
 
 @dataclass(frozen=True)
+class ChatGenerationSettings:
+    max_tokens: int | None = None
+    temperature: float | None = None
+    response_format: Literal["json_object"] | None = None
+
+
+@dataclass(frozen=True)
 class ChatResponse:
     content: str
     finish_reason: str | None = None

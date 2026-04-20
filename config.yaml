@@ -9,6 +9,7 @@ chat_api_key: dummy
 chat_model: local
 chat_context_window: 16384
 chat_streaming: true
+chat_probe_on_startup: false
 chat_provider_options: {}
 
 # Embeddings for semantic retrieval / RAG

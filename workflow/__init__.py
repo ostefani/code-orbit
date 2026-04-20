@@ -4,6 +4,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.panel import Panel
 
+from agent.chat import build_chat_adapter, probe_chat_adapter, validate_chat_adapter
 from agent.config import Config
 from agent.context import get_file_tree
 from agent.events import (
@@ -115,6 +116,20 @@ async def run_workflow(
         config=config,
         console=console_obj,
     )
+    try:
+        runtime.chat_adapter = build_chat_adapter(config)
+        await validate_chat_adapter(runtime.chat_adapter)
+        if config.chat_probe_on_startup:
+            await probe_chat_adapter(runtime.chat_adapter)
+    except Exception as exc:
+        event_bus.publish(AgentEvent(
+            name="run.failed",
+            level="error",
+            state="loading_chat",
+            message=str(exc),
+            payload=EmptyPayload(),
+        ))
+        raise WorkflowError(str(exc)) from exc
     state = WorkflowState.BUILDING_CONTEXT
     try:
         while state not in {WorkflowState.COMPLETED, WorkflowState.FAILED}:
@@ -150,3 +165,5 @@ async def run_workflow(
     finally:
         if runtime is not None and runtime.plan_path is not None:
             runtime.plan_path.unlink(missing_ok=True)
+        if runtime is not None and runtime.chat_adapter is not None:
+            await runtime.chat_adapter.aclose()

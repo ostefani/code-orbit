@@ -28,8 +28,9 @@ class Config:
     chat_api_base: str = "http://localhost:8081/v1"
     chat_api_key: str = "dummy"
     chat_model: str = "local"
-    chat_context_window: int = 16384
+    chat_context_window: int | None = None
     chat_streaming: bool = True
+    chat_probe_on_startup: bool = False
     chat_provider_options: dict[str, object] = field(default_factory=dict)
 
     # Embeddings for semantic retrieval / RAG
@@ -118,9 +119,11 @@ class Config:
                 "max_response_tokens must be smaller than max_context_tokens "
                 "so there is room for file context."
             )
-        if self.chat_context_window == 16384 and self.max_context_tokens != 16384:
-            object.__setattr__(self, "chat_context_window", self.max_context_tokens)
-        if self.chat_context_window <= 0:
+        chat_context_window = self.chat_context_window
+        if chat_context_window is None:
+            chat_context_window = self.max_context_tokens
+            object.__setattr__(self, "chat_context_window", chat_context_window)
+        if chat_context_window <= 0:
             raise ValueError("chat_context_window must be greater than zero.")
 
     @classmethod

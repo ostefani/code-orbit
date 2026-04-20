@@ -4,6 +4,7 @@ from pathlib import Path
 
 from rich.console import Console
 
+from agent.chat import ChatAdapter
 from agent.config import Config
 from agent.context import ContextBuildResult
 from agent.llm import PlanSchema
@@ -27,6 +28,7 @@ class WorkflowRuntime:
     prompt: str
     config: Config
     console: Console = field(default_factory=Console)
+    chat_adapter: ChatAdapter | None = None
     context_result: ContextBuildResult | None = None
     plan_path: Path | None = None
     architect_plan: PlanSchema | None = None

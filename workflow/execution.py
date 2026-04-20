@@ -169,6 +169,7 @@ async def run_execution_stage(
                     task,
                     runtime.working_context,
                     runtime.config,
+                    chat_adapter=runtime.chat_adapter,
                     on_chunk=on_chunk,
                 )
         except Exception as exc:

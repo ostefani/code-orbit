@@ -11,7 +11,7 @@ from pydantic import (
     model_validator,
 )
 
-from .chat import ChatMessage, run_chat, stream_chat
+from .chat import ChatGenerationSettings, ChatMessage, run_chat, stream_chat
 from .config import Config
 
 ARCHITECT_SYSTEM_PROMPT = """\
@@ -162,11 +162,17 @@ async def _call_structured_llm(
     user_message: str,
     config: Config,
     parser: Callable[[str], ModelT],
+    chat_adapter=None,
     on_chunk: Callable[[str], None] | None = None,
 ) -> ModelT:
     messages = (
         ChatMessage(role="system", content=system_prompt),
         ChatMessage(role="user", content=user_message),
+    )
+    generation = ChatGenerationSettings(
+        max_tokens=config.max_response_tokens,
+        temperature=0.2,
+        response_format="json_object",
     )
 
     if on_chunk is not None and config.chat_streaming:
@@ -174,8 +180,8 @@ async def _call_structured_llm(
         async for delta in stream_chat(
             messages,
             config,
-            max_tokens=config.max_response_tokens,
-            temperature=0.2,
+            adapter=chat_adapter,
+            generation=generation,
         ):
             if delta.content:
                 chunks.append(delta.content)
@@ -185,8 +191,8 @@ async def _call_structured_llm(
         response = await run_chat(
             messages,
             config,
-            max_tokens=config.max_response_tokens,
-            temperature=0.2,
+            adapter=chat_adapter,
+            generation=generation,
         )
         content = response.content.strip()
 
@@ -203,6 +209,7 @@ async def call_architect(
     prompt: str,
     context: str,
     config: Config,
+    chat_adapter=None,
     on_chunk: Callable[[str], None] | None = None,
 ) -> PlanSchema:
     """Ask the architect model for a high-level implementation plan."""
@@ -212,6 +219,7 @@ async def call_architect(
         user_message=user_message,
         config=config,
         parser=PlanSchema.model_validate_json,
+        chat_adapter=chat_adapter,
         on_chunk=on_chunk,
     )
     return result
@@ -222,6 +230,7 @@ async def call_coder_for_task(
     task: PlanTaskSchema,
     context: str,
     config: Config,
+    chat_adapter=None,
     on_chunk: Callable[[str], None] | None = None,
 ) -> CodeResponseSchema:
     """Ask the coder model for exact file replacements for one approved task."""
@@ -235,6 +244,7 @@ async def call_coder_for_task(
         user_message=user_message,
         config=config,
         parser=CodeResponseSchema.model_validate_json,
+        chat_adapter=chat_adapter,
         on_chunk=on_chunk,
     )
     return result
@@ -244,6 +254,7 @@ async def call_coder(
     plan: PlanSchema,
     context: str,
     config: Config,
+    chat_adapter=None,
     on_chunk: Callable[[str], None] | None = None,
 ) -> CodeResponseSchema:
     """Backward-compatible wrapper that executes the first approved task."""
@@ -254,5 +265,6 @@ async def call_coder(
         task=plan.tasks[0],
         context=context,
         config=config,
+        chat_adapter=chat_adapter,
         on_chunk=on_chunk,
     )

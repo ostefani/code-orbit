@@ -7,6 +7,7 @@ from agent.chat import (
     AdapterCapabilities,
     ChatAdapter,
     ChatDelta,
+    ChatGenerationSettings,
     ChatMessage,
     ChatProviderConfig,
     ChatResponse,
@@ -17,7 +18,8 @@ from agent.chat import (
     ProviderRateLimitError,
     ProviderUnavailableError,
     UnsupportedChatProviderError,
-    create_chat_adapter,
+    build_chat_adapter,
+    validate_chat_adapter,
 )
 from agent.chat import factory as chat_factory
 from agent.chat import orchestrator as chat_orchestrator
@@ -46,14 +48,12 @@ class FakeChatAdapter:
         self,
         messages,
         *,
-        max_tokens: int | None = None,
-        temperature: float | None = None,
+        generation: ChatGenerationSettings | None = None,
     ) -> ChatResponse:
         self.completed.append(
             {
                 "messages": list(messages),
-                "max_tokens": max_tokens,
-                "temperature": temperature,
+                "generation": generation,
             }
         )
         return ChatResponse(
@@ -66,14 +66,12 @@ class FakeChatAdapter:
         self,
         messages,
         *,
-        max_tokens: int | None = None,
-        temperature: float | None = None,
+        generation: ChatGenerationSettings | None = None,
     ):
         self.streamed.append(
             {
                 "messages": list(messages),
-                "max_tokens": max_tokens,
-                "temperature": temperature,
+                "generation": generation,
             }
         )
         yield ChatDelta(content="pro")
@@ -102,8 +100,11 @@ async def _assert_chat_adapter_contract(adapter: ChatAdapter) -> None:
             ChatMessage(role="system", content="You are helpful."),
             ChatMessage(role="user", content="Hello"),
         ],
-        max_tokens=32,
-        temperature=0.2,
+        generation=ChatGenerationSettings(
+            max_tokens=32,
+            temperature=0.2,
+            response_format="json_object",
+        ),
     )
     assert response.content
     assert response.finish_reason is not None
@@ -115,8 +116,11 @@ async def _assert_chat_adapter_contract(adapter: ChatAdapter) -> None:
             ChatMessage(role="system", content="You are helpful."),
             ChatMessage(role="user", content="Hello"),
         ],
-        max_tokens=32,
-        temperature=0.2,
+        generation=ChatGenerationSettings(
+            max_tokens=32,
+            temperature=0.2,
+            response_format="json_object",
+        ),
     ):
         chunks.append(delta.content)
     assert "".join(chunks)
@@ -183,6 +187,7 @@ def _install_fake_openai(monkeypatch, *, error: Exception | None = None):
                     messages: list[dict[str, str]],
                     max_tokens: int | None = None,
                     temperature: float | None = None,
+                    response_format: dict[str, str] | None = None,
                     stream: bool = False,
                 ):
                     owner.calls.append(
@@ -191,6 +196,7 @@ def _install_fake_openai(monkeypatch, *, error: Exception | None = None):
                             "messages": list(messages),
                             "max_tokens": max_tokens,
                             "temperature": temperature,
+                            "response_format": response_format,
                             "stream": stream,
                         }
                     )
@@ -270,8 +276,9 @@ def test_chat_adapter_contract_with_fake_adapter() -> None:
     asyncio.run(_assert_chat_adapter_contract(adapter))
 
     assert adapter.validates == 1
-    assert adapter.completed[0]["max_tokens"] == 32
-    assert adapter.streamed[0]["temperature"] == 0.2
+    assert adapter.completed[0]["generation"].max_tokens == 32
+    assert adapter.completed[0]["generation"].response_format == "json_object"
+    assert adapter.streamed[0]["generation"].temperature == 0.2
     assert adapter.closed is True
 
 
@@ -291,8 +298,7 @@ def test_openai_chat_adapter_contract(monkeypatch) -> None:
     )
 
     asyncio.run(adapter.validate())
-    assert len(AsyncOpenAI.instances) == 1
-    assert AsyncOpenAI.instances[0].calls == []
+    assert len(AsyncOpenAI.instances) == 0
 
     asyncio.run(_assert_chat_adapter_contract(adapter))
 
@@ -303,6 +309,7 @@ def test_openai_chat_adapter_contract(monkeypatch) -> None:
     assert instance.kwargs["timeout"] == 9
     assert instance.calls[0]["messages"][0]["role"] == "system"
     assert instance.calls[0]["model"] == "chat-model"
+    assert instance.calls[0]["response_format"] == {"type": "json_object"}
     assert instance.calls[1]["stream"] is True
     assert instance.closed_via == "close"
 
@@ -323,8 +330,11 @@ def test_openai_chat_validate_makes_no_network_call(monkeypatch) -> None:
     )
 
     asyncio.run(adapter.validate())
+    assert len(AsyncOpenAI.instances) == 0
+
+    asyncio.run(adapter.probe())
     assert len(AsyncOpenAI.instances) == 1
-    assert AsyncOpenAI.instances[0].calls == []
+    assert AsyncOpenAI.instances[0].calls[0]["messages"][0]["content"] == "probe"
 
     asyncio.run(adapter.aclose())
 
@@ -366,30 +376,37 @@ def test_chat_factory_uses_provider_specific_config(monkeypatch) -> None:
         },
     )
 
-    adapter = asyncio.run(create_chat_adapter(config))
+    adapter = build_chat_adapter(config)
+    assert len(AsyncOpenAI.instances) == 0
+
+    asyncio.run(validate_chat_adapter(adapter))
+    assert len(AsyncOpenAI.instances) == 0
+
+    asyncio.run(adapter.probe())
     assert len(AsyncOpenAI.instances) == 1
     instance = AsyncOpenAI.instances[0]
     assert instance.kwargs["base_url"] == "http://chat.example/v1"
     assert instance.kwargs["api_key"] == "chat-secret"
     assert instance.kwargs["timeout"] == 9
-    assert instance.calls == []
-
+    assert instance.calls[0]["messages"][0]["content"] == "probe"
     asyncio.run(adapter.aclose())
 
 
 def test_chat_factory_rejects_missing_api_key() -> None:
-    config = Config(
-        api_key="",
-        chat_provider="openai",
-        chat_api_base="http://chat.example/v1",
-        chat_api_key="",
-        chat_model="chat-model",
-        chat_context_window=4096,
-        chat_streaming=True,
+    adapter = OpenAIChatAdapter(
+        ChatProviderConfig(
+            provider="openai",
+            api_base="http://chat.example/v1",
+            api_key="",
+            model="chat-model",
+            context_window=4096,
+            streaming=True,
+            options={},
+        )
     )
 
     with pytest.raises(ProviderConfigurationError):
-        asyncio.run(create_chat_adapter(config))
+        asyncio.run(validate_chat_adapter(adapter))
 
 
 def test_chat_factory_rejects_streaming_mismatch(monkeypatch) -> None:
@@ -410,7 +427,7 @@ def test_chat_factory_rejects_streaming_mismatch(monkeypatch) -> None:
     )
 
     try:
-        asyncio.run(create_chat_adapter(config))
+        build_chat_adapter(config)
     except CapabilityNotSupportedError as exc:
         assert "streaming" in str(exc)
     else:
@@ -428,7 +445,7 @@ def test_chat_factory_rejects_unknown_provider() -> None:
     )
 
     try:
-        asyncio.run(create_chat_adapter(config))
+        build_chat_adapter(config)
     except UnsupportedChatProviderError as exc:
         assert "Unsupported chat provider" in str(exc)
     else:
@@ -460,14 +477,16 @@ def test_chat_factory_rejects_openai_errors(monkeypatch) -> None:
         chat_streaming=True,
     )
 
-    adapter = asyncio.run(create_chat_adapter(config))
+    adapter = build_chat_adapter(config)
 
     with pytest.raises(ProviderAuthenticationError):
         asyncio.run(
             adapter.complete(
                 [ChatMessage(role="user", content="hello")],
-                max_tokens=8,
-                temperature=0.2,
+                generation=ChatGenerationSettings(
+                    max_tokens=8,
+                    temperature=0.2,
+                ),
             )
         )
 
@@ -476,8 +495,10 @@ def test_chat_factory_rejects_openai_errors(monkeypatch) -> None:
         asyncio.run(
             adapter.stream(
                 [ChatMessage(role="user", content="hello")],
-                max_tokens=8,
-                temperature=0.2,
+                generation=ChatGenerationSettings(
+                    max_tokens=8,
+                    temperature=0.2,
+                ),
             ).__anext__()
         )
 
@@ -488,10 +509,7 @@ def test_chat_factory_rejects_openai_errors(monkeypatch) -> None:
 def test_run_chat_closes_owned_adapter(monkeypatch) -> None:
     adapter = FakeChatAdapter()
 
-    async def fake_create_chat_adapter(config: Config) -> FakeChatAdapter:
-        return adapter
-
-    monkeypatch.setattr(chat_orchestrator, "create_chat_adapter", fake_create_chat_adapter)
+    monkeypatch.setattr(chat_orchestrator, "build_chat_adapter", lambda config: adapter)
 
     response = asyncio.run(
         chat_orchestrator.run_chat(

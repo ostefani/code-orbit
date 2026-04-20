@@ -76,9 +76,9 @@ llama-server \
 cp config.yaml config.local.yaml   # optional — config.yaml works as-is
 
 # 6. Configure chat and embeddings (Optional)
-Chat and embeddings both go through provider adapters selected from config.
-The selection points are isolated behind factory layers so orchestration code
-does not need provider-specific branches.
+Chat now goes through a provider adapter layer selected from config. The
+current implementation ships with an OpenAI/OpenAI-compatible chat adapter,
+and orchestration code does not need provider-specific branches.
 
 ```yaml
 chat_provider: openai
@@ -87,6 +87,7 @@ chat_api_key: dummy
 chat_model: local
 chat_context_window: 16384
 chat_streaming: true
+chat_probe_on_startup: false
 
 embedding_provider: openai
 embedding_api_base: http://localhost:8081/v1
@@ -101,6 +102,9 @@ embedding_provider_options:
 `embedding_*` settings control semantic retrieval. Provider-specific SDK
 settings belong in the matching `*_provider_options` mapping.
 
+Set `chat_probe_on_startup: true` if you want Code Orbit to make one live chat
+request at startup to verify credentials and reachability. Leave it off to
+keep startup cheap.
 Set `embedding_probe_on_startup: true` if you want Code Orbit to make one live
 embedding request at startup to verify credentials and reachability. Leave it
 off to keep startup cheap and let the first semantic operation hit the backend.
@@ -171,6 +175,7 @@ chat_api_key: 'dummy'
 chat_model: 'local'
 chat_context_window: 16384
 chat_streaming: true
+chat_probe_on_startup: false
 interactive: true # show diffs, ask before applying
 auto_commit: false # git commit after applying
 embedding_provider: openai # embeddings provider adapter
