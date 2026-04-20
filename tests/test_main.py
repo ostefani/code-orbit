@@ -4,13 +4,9 @@ from pathlib import Path
 from agent.config import Config
 from agent.events import AgentEvent, EventBus, RunProposalReadyPayload
 from agent.llm import CodeChangeSchema, CodeResponseSchema, PlanSchema, PlanTaskSchema
-from main import (
-    build_working_context,
-    load_history,
-    open_plan_in_editor,
-    save_history,
-    validate_llm_result,
-)
+from main import load_history, save_history
+from workflow.editing import open_plan_in_editor
+from workflow.execution import build_working_context, validate_llm_result
 
 
 def test_config_rejects_impossible_context_budget() -> None:
@@ -219,7 +215,7 @@ def test_open_plan_in_editor_parses_modified_plan(monkeypatch, tmp_path) -> None
         temp_path.write_text(edited.model_dump_json(indent=2), encoding="utf-8")
         return __import__("subprocess").CompletedProcess(cmd, 0)
 
-    monkeypatch.setattr("main.subprocess.run", fake_run)
+    monkeypatch.setattr("workflow.editing.subprocess.run", fake_run)
     monkeypatch.setenv("EDITOR", "vim -u NONE")
     temp_path.write_text(original.model_dump_json(indent=2), encoding="utf-8")
 

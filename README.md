@@ -190,12 +190,20 @@ llama-server \
 
 ```
 code-orbit/
-├── main.py              # CLI entry point
+├── main.py              # CLI wrapper, history, prompt handling
 ├── agent/
 │   ├── config.py        # Config dataclass, YAML loading
 │   ├── context.py       # Directory walker, context builder
 │   ├── llm.py           # llama.cpp API client
 │   └── patcher.py       # Diff preview, file writer, git commit
+├── workflow/
+│   ├── __init__.py      # workflow entrypoint and orchestration
+│   ├── _state.py        # workflow state and runtime dataclass
+│   ├── context.py       # context-building stage
+│   ├── planning.py      # plan drafting and review stage
+│   ├── editing.py       # plan editing stage
+│   ├── execution.py     # coder execution and validation stage
+│   └── output.py        # preview / apply / commit stages
 ├── config.yaml          # Default config (commit this)
 ├── config.local.yaml    # Personal overrides (gitignored)
 ├── requirements.txt
