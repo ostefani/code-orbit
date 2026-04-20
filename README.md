@@ -179,9 +179,11 @@ llama-server \
   --model your-model.gguf \
   --port 8080 \
   --ctx-size 32768 \          # must match config.yaml max_context_tokens
-  --n-gpu-layers 99 \         # offload all layers to GPU
+  --n-gpu-layers -1 \         # offload all layers to GPU
   --threads 8 \               # CPU threads for non-GPU layers
   --batch-size 512            # prompt processing batch size
+  --embeddings \
+  --pooling mean
 ```
 
 ## Project structure
