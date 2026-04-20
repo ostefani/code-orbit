@@ -1,13 +1,14 @@
 import asyncio
 import ast
-import inspect
 import hashlib
+import inspect
 import json
 import math
 import os
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol, Sequence, Self
+from typing import Any, Protocol, Sequence
 
 import numpy as np
 
@@ -62,12 +63,13 @@ class EmbeddingClient(Protocol):
     async def embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]: ...
 
 
-@dataclass(frozen=True)
-class _VectorStoreNumpyIndex:
-    record_paths: tuple[str, ...]
-    chunk_matrix: np.ndarray
-    chunk_path_ids: np.ndarray
-    chunk_norms: np.ndarray
+class _EmbeddingVectorsAPI(Protocol):
+    async def create(self, *, model: str, input: list[str]) -> Any: ...
+
+
+class _EmbeddingClientAPI(Protocol):
+    @property
+    def embeddings(self) -> _EmbeddingVectorsAPI: ...
 
 
 class OpenAICompatibleEmbeddingClient:
@@ -75,10 +77,11 @@ class OpenAICompatibleEmbeddingClient:
         self.api_base = api_base.rstrip("/")
         self.api_key = api_key
         self.model = model
-        self._client: object | None = None
+        self._client: _EmbeddingClientAPI | None = None
 
-    def _get_client(self) -> object:
-        if self._client is None:
+    def _get_client(self) -> _EmbeddingClientAPI:
+        client = self._client
+        if client is None:
             try:
                 from openai import AsyncOpenAI
             except ImportError as exc:  # pragma: no cover - dependency issue
@@ -86,8 +89,9 @@ class OpenAICompatibleEmbeddingClient:
                     "The 'openai' package is required for embedding generation."
                 ) from exc
 
-            self._client = AsyncOpenAI(base_url=self.api_base, api_key=self.api_key)
-        return self._client
+            client = AsyncOpenAI(base_url=self.api_base, api_key=self.api_key)
+            self._client = client
+        return client
 
     async def embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
         client = self._get_client()
@@ -107,10 +111,18 @@ class OpenAICompatibleEmbeddingClient:
         self._client = None
 
 
+@dataclass(frozen=True)
+class _VectorStoreNumpyIndex:
+    record_paths: tuple[str, ...]
+    chunk_matrix: np.ndarray
+    chunk_path_ids: np.ndarray
+    chunk_norms: np.ndarray
+
+
 class VectorStore:
-    def __init__(self, records: Sequence[FileEmbeddingRecord] | None = None) -> None:
+    def __init__(self, records: Iterable[FileEmbeddingRecord] = ()) -> None:
         self._records: dict[str, FileEmbeddingRecord] = {
-            record.path: record for record in (records or [])
+            record.path: record for record in records
         }
         self._numpy_index: _VectorStoreNumpyIndex | None = None
 
@@ -235,7 +247,7 @@ class EmbeddingCache:
     files: dict[str, FileEmbeddingRecord] = field(default_factory=dict)
 
     @classmethod
-    def load(cls, path: Path) -> Self:
+    def load(cls, path: Path) -> EmbeddingCache:
         if not path.exists():
             legacy_path = _legacy_cache_sibling_path(path)
             if legacy_path.exists():
@@ -256,7 +268,6 @@ class EmbeddingCache:
         return cls()
 
     def save(self, path: Path) -> None:
-        np = _require_numpy()
         metadata, vectors = _serialize_cache_arrays(self.files, np)
         path.parent.mkdir(parents=True, exist_ok=True)
         temp_path = path.with_name(f"{path.name}.tmp")
@@ -289,16 +300,6 @@ def _legacy_embedding_cache_path(root: str | Path) -> Path:
 
 def _legacy_cache_sibling_path(path: Path) -> Path:
     return path.parent / LEGACY_CACHE_FILENAME
-
-
-def _require_numpy():
-    try:
-        import numpy as np
-    except ImportError as exc:  # pragma: no cover - dependency issue
-        raise RuntimeError(
-            "The 'numpy' package is required for embedding cache storage."
-        ) from exc
-    return np
 
 
 def _looks_like_npz(path: Path) -> bool:
@@ -399,7 +400,6 @@ def _load_legacy_json_cache(path: Path) -> EmbeddingCache | None:
 
 
 def _load_npz_cache(path: Path) -> EmbeddingCache | None:
-    np = _require_numpy()
     try:
         with np.load(path, allow_pickle=False) as archive:
             if "metadata" not in archive or "vectors" not in archive:
