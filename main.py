@@ -11,6 +11,7 @@ import argparse
 import os
 import json
 import asyncio
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -260,8 +261,14 @@ def load_plan_draft(plan_path: Path) -> PlanSchema:
 
 def open_plan_in_editor(plan_path: Path) -> PlanSchema:
     while True:
-        editor = os.environ.get("EDITOR", "vim")
-        result = subprocess.run([editor, str(plan_path)], check=False)
+        # Treat EDITOR as a command line, not a shell string.
+        # This supports editors with flags (for example, "code --wait")
+        # without invoking a shell.
+        editor_cmd = shlex.split(os.environ.get("EDITOR", "vim"))
+        if not editor_cmd:
+            editor_cmd = ["vim"]
+
+        result = subprocess.run([*editor_cmd, str(plan_path)], check=False)
         if result.returncode != 0:
             raise RuntimeError(
                 f"Editor exited with status {result.returncode}. "

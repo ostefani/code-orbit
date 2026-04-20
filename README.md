@@ -108,6 +108,8 @@ python main.py --dir . --prompt "" --tree
 python main.py --dir . --prompt "..." --config config.local.yaml
 ```
 
+When you edit the plan, Code Orbit reads `EDITOR` as a command line rather than a shell string, so values like `vim -u NONE` or `code --wait` work. The launcher is currently tuned for Unix-like environments; if Windows support becomes a goal, the editor parsing strategy will need a small portability review because `shlex.split()` uses POSIX rules.
+
 Tokens are counted using `tokenizer_backend: estimate`. If you want to learn more on how to use tokenizers and improve tokens counting see TOKEN_COUNTING.md.
 
 ### All options

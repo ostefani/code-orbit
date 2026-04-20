@@ -215,12 +215,12 @@ def test_open_plan_in_editor_parses_modified_plan(monkeypatch, tmp_path) -> None
     temp_path = tmp_path / "code-orbit-plan.json"
 
     def fake_run(cmd, check=False):
-        assert cmd[0] == "vim"
+        assert cmd[:2] == ["vim", "-u"]
         temp_path.write_text(edited.model_dump_json(indent=2), encoding="utf-8")
         return __import__("subprocess").CompletedProcess(cmd, 0)
 
     monkeypatch.setattr("main.subprocess.run", fake_run)
-    monkeypatch.setenv("EDITOR", "vim")
+    monkeypatch.setenv("EDITOR", "vim -u NONE")
     temp_path.write_text(original.model_dump_json(indent=2), encoding="utf-8")
 
     approved = open_plan_in_editor(temp_path)
