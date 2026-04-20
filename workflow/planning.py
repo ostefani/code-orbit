@@ -9,6 +9,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from agent.events import AgentEvent, EmptyPayload, EventBus, PlanReadyPayload, StateChangedPayload
 from agent.llm import PlanSchema, call_architect
 
+from .errors import WorkflowError
 from ._state import WorkflowRuntime, WorkflowState, reset_execution_state
 
 
@@ -97,7 +98,7 @@ async def run_planning_stage(
             message=str(exc),
             payload=EmptyPayload(),
         ))
-        raise
+        raise WorkflowError(str(exc)) from exc
 
     if runtime.plan_path is None:
         runtime.plan_path = create_plan_draft_path()

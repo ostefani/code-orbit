@@ -9,6 +9,7 @@ from rich.prompt import Confirm
 from agent.events import AgentEvent, EmptyPayload, EventBus, StateChangedPayload
 from agent.llm import PlanSchema
 
+from .errors import WorkflowError
 from ._state import WorkflowRuntime, WorkflowState
 from .planning import load_plan_draft
 
@@ -63,5 +64,5 @@ def run_editing_plan_stage(
             message=str(exc),
             payload=EmptyPayload(),
         ))
-        raise
+        raise WorkflowError(str(exc)) from exc
     return WorkflowState.EXECUTING

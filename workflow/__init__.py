@@ -18,6 +18,7 @@ from agent.events import (
 )
 from agent.rendering import CliEventRenderer
 
+from .errors import WorkflowError
 from ._state import WorkflowRuntime, WorkflowState
 from .context import run_build_context_stage
 from .editing import run_editing_plan_stage
@@ -25,7 +26,7 @@ from .execution import run_execution_stage
 from .output import run_applying_stage, run_committing_stage, run_review_diff_stage
 from .planning import run_planning_stage
 
-__all__ = ["run_workflow"]
+__all__ = ["run_workflow", "WorkflowError"]
 
 
 async def run_workflow(
@@ -61,7 +62,7 @@ async def run_workflow(
             payload=EmptyPayload(),
         ))
         console_obj.print(f"[bold red]Error loading config:[/bold red] {exc}")
-        raise
+        raise WorkflowError(str(exc)) from exc
 
     for message in config_result.messages:
         event_bus.publish(AgentEvent(
@@ -123,10 +124,7 @@ async def run_workflow(
                 case WorkflowState.PLANNING:
                     state = await run_planning_stage(runtime, event_bus)
                 case WorkflowState.EDITING_PLAN:
-                    try:
-                        state = run_editing_plan_stage(runtime, event_bus)
-                    except Exception:
-                        state = WorkflowState.FAILED
+                    state = run_editing_plan_stage(runtime, event_bus)
                 case WorkflowState.EXECUTING:
                     state = await run_execution_stage(runtime, event_bus)
                 case WorkflowState.REVIEWING_DIFF:
@@ -147,6 +145,10 @@ async def run_workflow(
                     affected_count=len(runtime.affected_files),
                 ),
             ))
+        elif state == WorkflowState.FAILED:
+            raise WorkflowError(
+                runtime.execution_feedback or "Workflow failed."
+            )
     finally:
         if runtime is not None and runtime.plan_path is not None:
             runtime.plan_path.unlink(missing_ok=True)

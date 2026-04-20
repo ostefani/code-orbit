@@ -1,12 +1,16 @@
+import asyncio
 import json
 from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 
 from agent.config import Config
 from agent.events import AgentEvent, EventBus, RunProposalReadyPayload
 from agent.llm import CodeChangeSchema, CodeResponseSchema, PlanSchema, PlanTaskSchema
 from rich.console import Console
+import main as main_module
 from main import load_history, save_history
+from workflow import WorkflowError, run_workflow
 from workflow.editing import open_plan_in_editor
 from workflow.execution import build_working_context, validate_llm_result
 
@@ -109,6 +113,68 @@ def test_run_proposal_ready_event_can_be_published() -> None:
     assert published.name == "run.proposal_ready"
     assert published.state == "validated"
     assert published.payload.change_count == 2
+
+
+def test_run_workflow_wraps_config_failures_as_workflow_error(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    def fake_load_with_diagnostics(config_path, profile_name=None):
+        raise ValueError("bad config")
+
+    monkeypatch.setattr(
+        "workflow.Config.load_with_diagnostics",
+        fake_load_with_diagnostics,
+    )
+
+    try:
+        asyncio.run(
+            run_workflow(
+                target_dir=str(tmp_path),
+                prompt="Test prompt",
+                console=Console(file=StringIO()),
+            )
+        )
+    except WorkflowError as exc:
+        assert "bad config" in str(exc)
+    else:
+        raise AssertionError("Expected WorkflowError for config failures")
+
+
+def test_main_reports_unexpected_errors(monkeypatch, tmp_path: Path, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "main.parse_args",
+        lambda: SimpleNamespace(
+            dir=".",
+            prompt="Test prompt",
+            profile=None,
+            config="config.yaml",
+            no_interactive=False,
+            auto_commit=False,
+            allow_delete=False,
+            tree=False,
+        ),
+    )
+    monkeypatch.setattr("main.load_history", lambda: [])
+    monkeypatch.setattr("main.save_history", lambda prompt: None)
+
+    def fake_run_workflow(**kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("main.run_workflow", fake_run_workflow)
+
+    try:
+        main_module.main()
+    except SystemExit as exc:
+        assert exc.code == 1
+    else:
+        raise AssertionError("Expected main() to exit with code 1")
+
+    captured = capsys.readouterr()
+    assert "Unexpected error:" in captured.out
+    assert "boom" in captured.out
 
 
 def test_change_schema_requires_content_for_create_and_update() -> None:

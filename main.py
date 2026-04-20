@@ -16,7 +16,7 @@ from pathlib import Path
 from rich.prompt import Prompt
 from rich import print as rprint
 
-from workflow import run_workflow
+from workflow import WorkflowError, run_workflow
 
 
 HISTORY_DIR = Path(".code-orbit")
@@ -147,7 +147,10 @@ def main() -> None:
     except KeyboardInterrupt:
         rprint("\n[bold red]Stopping...[/bold red]")
         sys.exit(0)
-    except Exception:
+    except WorkflowError:
+        sys.exit(1)
+    except Exception as exc:
+        rprint(f"[bold red]Unexpected error:[/bold red] {exc}")
         sys.exit(1)
 
 
