@@ -51,6 +51,12 @@ def _load_chat_builder(
 
 
 def build_chat_adapter(config: Config) -> ChatAdapter:
+    """Construct an unvalidated chat adapter from config.
+
+    This does not perform local validation, network probing, or any other
+    readiness checks. Callers must either validate explicitly or use
+    `create_chat_adapter()` when they need a ready-to-use adapter.
+    """
     provider_config = build_chat_provider_config(config)
     dotted_path = _CHAT_PROVIDER_BUILDERS.get(provider_config.provider)
     if dotted_path is None:
@@ -76,16 +82,19 @@ def build_chat_adapter(config: Config) -> ChatAdapter:
 
 
 async def validate_chat_adapter(adapter: ChatAdapter) -> None:
+    """Run local, non-network validation on an adapter."""
     await adapter.validate()
 
 
 async def probe_chat_adapter(adapter: ChatAdapter) -> None:
+    """Run an optional live readiness probe for adapters that support it."""
     if not isinstance(adapter, ProbingChatAdapter):
         return
     await adapter.probe()
 
 
 async def create_chat_adapter(config: Config) -> ChatAdapter:
+    """Convenience initializer that returns a ready-to-use adapter."""
     adapter = build_chat_adapter(config)
     await validate_chat_adapter(adapter)
     if config.chat_probe_on_startup:

@@ -102,6 +102,14 @@ embedding_provider_options:
 `embedding_*` settings control semantic retrieval. Provider-specific SDK
 settings belong in the matching `*_provider_options` mapping.
 
+Chat lifecycle at a glance:
+- `build_chat_adapter()` constructs an unvalidated adapter.
+- `validate_chat_adapter()` runs local checks only.
+- `probe_chat_adapter()` performs an optional live readiness check for
+  probing-capable adapters.
+- `create_chat_adapter()` is the startup convenience path that combines build,
+  validation, and optional probe.
+
 Set `chat_probe_on_startup: true` if you want Code Orbit to make one live chat
 provider readiness check at startup to verify credentials and reachability.
 For OpenAI-compatible providers this is a live `models.list()` request, so

@@ -375,7 +375,7 @@ def test_openai_chat_adapter_reports_unavailable_package(monkeypatch) -> None:
         asyncio.run(adapter.validate())
 
 
-def test_chat_factory_uses_provider_specific_config(monkeypatch) -> None:
+def test_build_chat_adapter_returns_unvalidated_adapter(monkeypatch) -> None:
     AsyncOpenAI, _, _ = _install_fake_openai(monkeypatch)
 
     config = Config(
@@ -392,8 +392,52 @@ def test_chat_factory_uses_provider_specific_config(monkeypatch) -> None:
         },
     )
 
+    adapter = build_chat_adapter(config)
+    assert len(AsyncOpenAI.instances) == 0
+
+    asyncio.run(validate_chat_adapter(adapter))
+    assert len(AsyncOpenAI.instances) == 0
+
+    asyncio.run(adapter.aclose())
+
+
+def test_create_chat_adapter_stays_lazy_after_validation(monkeypatch) -> None:
+    AsyncOpenAI, _, _ = _install_fake_openai(monkeypatch)
+
+    config = Config(
+        chat_provider="openai",
+        chat_api_base="http://chat.example/v1",
+        chat_api_key="chat-secret",
+        chat_model="chat-model",
+        chat_context_window=4096,
+        chat_streaming=True,
+        chat_provider_options={"timeout": 9},
+    )
+
     adapter = asyncio.run(create_chat_adapter(config))
     assert len(AsyncOpenAI.instances) == 0
+
+    asyncio.run(adapter.aclose())
+
+
+def test_openai_chat_probe_uses_models_list(monkeypatch) -> None:
+    AsyncOpenAI, _, _ = _install_fake_openai(monkeypatch)
+
+    config = Config(
+        chat_provider="openai",
+        chat_api_base="http://chat.example/v1",
+        chat_api_key="chat-secret",
+        chat_model="chat-model",
+        chat_context_window=4096,
+        chat_streaming=True,
+        chat_provider_options={
+            "timeout": 9,
+            "api_key": "should-not-clobber",
+            "base_url": "should-not-clobber",
+        },
+    )
+
+    adapter = build_chat_adapter(config)
 
     asyncio.run(adapter.probe())
     assert len(AsyncOpenAI.instances) == 1
@@ -402,7 +446,10 @@ def test_chat_factory_uses_provider_specific_config(monkeypatch) -> None:
     assert instance.kwargs["api_key"] == "chat-secret"
     assert instance.kwargs["timeout"] == 9
     assert instance.model_calls[0]["op"] == "list"
+    assert instance.calls == []
     asyncio.run(adapter.aclose())
+
+
 
 
 def test_probe_chat_adapter_skips_non_probing_adapters() -> None:
