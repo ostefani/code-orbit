@@ -13,8 +13,7 @@ from ._state import WorkflowRuntime, WorkflowState
 from .planning import load_plan_draft
 
 
-def open_plan_in_editor(plan_path: Path, console: Console | None = None) -> PlanSchema:
-    console = console or Console()
+def open_plan_in_editor(plan_path: Path, console: Console) -> PlanSchema:
     while True:
         # Treat EDITOR as a command line, not a shell string.
         # This supports editors with flags (for example, "code --wait")

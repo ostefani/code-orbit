@@ -61,7 +61,7 @@ async def run_workflow(
             payload=EmptyPayload(),
         ))
         console_obj.print(f"[bold red]Error loading config:[/bold red] {exc}")
-        raise SystemExit(1) from exc
+        raise
 
     for message in config_result.messages:
         event_bus.publish(AgentEvent(

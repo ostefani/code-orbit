@@ -1,9 +1,11 @@
 import json
+from io import StringIO
 from pathlib import Path
 
 from agent.config import Config
 from agent.events import AgentEvent, EventBus, RunProposalReadyPayload
 from agent.llm import CodeChangeSchema, CodeResponseSchema, PlanSchema, PlanTaskSchema
+from rich.console import Console
 from main import load_history, save_history
 from workflow.editing import open_plan_in_editor
 from workflow.execution import build_working_context, validate_llm_result
@@ -219,7 +221,7 @@ def test_open_plan_in_editor_parses_modified_plan(monkeypatch, tmp_path) -> None
     monkeypatch.setenv("EDITOR", "vim -u NONE")
     temp_path.write_text(original.model_dump_json(indent=2), encoding="utf-8")
 
-    approved = open_plan_in_editor(temp_path)
+    approved = open_plan_in_editor(temp_path, Console(file=StringIO()))
 
     assert approved.summary == "Edited plan"
     assert approved.tasks[0].files == ["src/app.py", "agent/llm.py"]

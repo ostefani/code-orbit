@@ -147,6 +147,8 @@ def main() -> None:
     except KeyboardInterrupt:
         rprint("\n[bold red]Stopping...[/bold red]")
         sys.exit(0)
+    except Exception:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
