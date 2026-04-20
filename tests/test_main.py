@@ -4,6 +4,8 @@ from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from agent.config import Config
 from agent.events import AgentEvent, EventBus, RunProposalReadyPayload
 from agent.llm import CodeChangeSchema, CodeResponseSchema, PlanSchema, PlanTaskSchema
@@ -128,7 +130,7 @@ def test_run_workflow_wraps_config_failures_as_workflow_error(
         fake_load_with_diagnostics,
     )
 
-    try:
+    with pytest.raises(WorkflowError, match="bad config"):
         asyncio.run(
             run_workflow(
                 target_dir=str(tmp_path),
@@ -136,10 +138,6 @@ def test_run_workflow_wraps_config_failures_as_workflow_error(
                 console=Console(file=StringIO()),
             )
         )
-    except WorkflowError as exc:
-        assert "bad config" in str(exc)
-    else:
-        raise AssertionError("Expected WorkflowError for config failures")
 
 
 def test_main_reports_unexpected_errors(monkeypatch, tmp_path: Path, capsys) -> None:

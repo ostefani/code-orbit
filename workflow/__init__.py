@@ -146,9 +146,7 @@ async def run_workflow(
                 ),
             ))
         elif state == WorkflowState.FAILED:
-            raise WorkflowError(
-                runtime.execution_feedback or "Workflow failed."
-            )
+            raise WorkflowError("Workflow failed.")
     finally:
         if runtime is not None and runtime.plan_path is not None:
             runtime.plan_path.unlink(missing_ok=True)
