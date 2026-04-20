@@ -10,6 +10,7 @@ from agent.embeddings import (
     EmbeddingAdapter,
     EmbeddingProviderAuthenticationError,
     EmbeddingProviderConfig,
+    EmbeddingProviderConfigurationError,
     EmbeddingProviderRateLimitError,
     EmbeddingProviderUnavailableError,
     OpenAICompatibleEmbeddingClient,
@@ -430,6 +431,23 @@ def test_openai_adapter_reports_unavailable_package(monkeypatch) -> None:
     )
 
     with pytest.raises(EmbeddingProviderUnavailableError):
+        asyncio.run(adapter.validate())
+
+
+def test_openai_adapter_rejects_unknown_options(monkeypatch) -> None:
+    _install_fake_openai(monkeypatch)
+
+    adapter = OpenAIEmbeddingAdapter(
+        EmbeddingProviderConfig(
+            provider="openai",
+            api_base="http://embeddings.example/v1",
+            api_key="embedding-secret",
+            model="embed-model",
+            options={"workload_identity": "unexpected"},
+        )
+    )
+
+    with pytest.raises(EmbeddingProviderConfigurationError):
         asyncio.run(adapter.validate())
 
 
