@@ -24,10 +24,14 @@ class Config:
     model: str = "local"
 
     # Embeddings for semantic retrieval / RAG
+    embedding_provider: str = "openai"
     embedding_api_base: str = "http://localhost:8081/v1"
+    embedding_api_key: str = ""
     embedding_model: str = "nomic-embed-text"
     embedding_batch_size: int = 16
     embedding_max_concurrency: int = 4
+    embedding_probe_on_startup: bool = False
+    embedding_provider_options: dict[str, object] = field(default_factory=dict)
 
     max_context_tokens: int = 16384
     max_response_tokens: int = 4096
@@ -76,6 +80,12 @@ class Config:
     allow_delete: bool = False
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "embedding_provider",
+            (self.embedding_provider or "openai").strip().lower(),
+        )
+
         patterns = tuple(self.ignore_patterns)
         if ".code-orbit" not in patterns:
             patterns = patterns + (".code-orbit",)

@@ -72,11 +72,31 @@ llama-server \
 # 5. Copy and edit config
 cp config.yaml config.local.yaml   # optional — config.yaml works as-is
 
-# 6. Using other local providers (Optional)
-Code Orbit works with any OpenAI-compatible local server.
+# 6. Configure embeddings (Optional)
+Embeddings now go through a provider adapter selected from config. The default
+provider is still `openai`, but the selection point is isolated behind the
+factory layer so orchestration code does not need provider-specific branches.
+
+```yaml
+embedding_provider: openai
+embedding_api_base: http://localhost:8081/v1
+embedding_api_key: dummy
+embedding_model: nomic-embed-text
+embedding_probe_on_startup: false
+embedding_provider_options:
+  timeout: 30
+```
+
+`embedding_provider_options` is where provider-specific SDK settings belong.
+Set `embedding_probe_on_startup: true` if you want Code Orbit to make one live
+embedding request at startup to verify credentials and reachability. Leave it
+off to keep startup cheap and let the first semantic operation hit the backend.
+
+### Using other local providers (Optional)
+Code Orbit still works with any OpenAI-compatible local server.
 
 **Ollama**
-1. Start Ollama and pull your model (e.g., `ollama pull qwen2.5-coder:32b`).
+1. Start Ollama and pull your model.
 2. Update `config.yaml` or use the `--profile ollama` flag.
 3. Set `api_base: http://localhost:11434/v1`.
 
@@ -134,6 +154,12 @@ max_context_tokens: 16384 # match your model's context size
 max_response_tokens: 4096 # reserve room for the model's reply
 interactive: true # show diffs, ask before applying
 auto_commit: false # git commit after applying
+embedding_provider: openai # embeddings provider adapter
+embedding_api_base: 'http://localhost:8081/v1'
+embedding_api_key: '' # leave empty to reuse api_key
+embedding_model: 'nomic-embed-text'
+embedding_probe_on_startup: false # set true to probe the backend once at startup
+embedding_provider_options: {} # provider-specific SDK kwargs
 ```
 
 For personal overrides without affecting git, use `config.local.yaml` (already in `.gitignore`).

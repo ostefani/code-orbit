@@ -61,7 +61,12 @@ def test_build_context(temp_codebase: Path) -> None:
     prompt = "Update the Python source files"
 
     result = asyncio.run(
-        build_context_async(str(temp_codebase), prompt, config)
+        build_context_async(
+            str(temp_codebase),
+            prompt,
+            config,
+            embedding_client=FakeSemanticEmbeddingClient(),
+        )
     )
 
     paths = [entry.path for entry in result.entries]
@@ -88,7 +93,12 @@ def test_context_token_limit(temp_codebase: Path) -> None:
     prompt = "Update the Python source files"
 
     result = asyncio.run(
-        build_context_async(str(temp_codebase), prompt, config)
+        build_context_async(
+            str(temp_codebase),
+            prompt,
+            config,
+            embedding_client=FakeSemanticEmbeddingClient(),
+        )
     )
 
     paths = [entry.path for entry in result.entries]
@@ -112,6 +122,7 @@ def test_build_context_reports_budget_breakdown_and_zero_budget_warning(
             str(temp_codebase),
             "Update the Python source files",
             config,
+            embedding_client=FakeSemanticEmbeddingClient(),
         )
     )
 
@@ -135,7 +146,12 @@ def test_build_context_skips_symlinks(temp_codebase: Path, tmp_path_factory) -> 
 
     config = Config(ignore_patterns=[".git", "node_modules"])
     result = asyncio.run(
-        build_context_async(str(temp_codebase), "Inspect files", config)
+        build_context_async(
+            str(temp_codebase),
+            "Inspect files",
+            config,
+            embedding_client=FakeSemanticEmbeddingClient(),
+        )
     )
 
     paths = [entry.path for entry in result.entries]
@@ -144,6 +160,12 @@ def test_build_context_skips_symlinks(temp_codebase: Path, tmp_path_factory) -> 
 
 
 class FakeSemanticEmbeddingClient:
+    async def validate(self) -> None:
+        return None
+
+    async def probe(self) -> None:
+        return None
+
     async def embed(self, texts):
         vectors = []
         for text in texts:
@@ -221,6 +243,12 @@ def test_build_context_emits_warning_on_semantic_failure(
     )
 
     class FailingEmbeddingClient:
+        async def validate(self) -> None:
+            return None
+
+        async def probe(self) -> None:
+            return None
+
         async def embed(self, texts):
             raise RuntimeError("boom")
 

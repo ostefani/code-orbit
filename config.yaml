@@ -3,10 +3,14 @@ max_context_tokens: 16384
 max_response_tokens: 4096
 
 # Embeddings for semantic retrieval / RAG
+embedding_provider: openai
 embedding_api_base: 'http://localhost:8081/v1'
+embedding_api_key: ''
 embedding_model: 'nomic-embed-text'
 embedding_batch_size: 16
 embedding_max_concurrency: 4
+embedding_probe_on_startup: false
+embedding_provider_options: {}
 
 # Profiles: select with --profile / -P
 # 'default_profile' is used when no --profile flag is passed.
@@ -47,6 +51,12 @@ profiles:
         auto_commit: true,
         # embedding_api_base: 'http://localhost:8082/v1'
         # embedding_model: 'local'
+    openai:
+        api_base: https://api.openai.com/v1
+        api_key: <key>
+        model: o3
+        max_context_tokens: 32768
+        max_response_tokens: 16384
 
 # Pause and show diffs before applying changes
 interactive: true

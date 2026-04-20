@@ -13,11 +13,11 @@ from .constants import (
     TEST_HINTS,
 )
 from .embeddings import (
-    EmbeddingClient,
+    EmbeddingAdapter,
     EmbeddingSyncResult,
     build_embedding_index,
+    create_embedding_adapter,
     default_embedding_cache_path,
-    OpenAICompatibleEmbeddingClient,
 )
 from .events import ContextWarningPayload, EventBus
 from .llm import SYSTEM_PROMPT
@@ -231,7 +231,7 @@ async def build_context_async(
     prompt: str,
     config: Config,
     *,
-    embedding_client: EmbeddingClient | None = None,
+    embedding_client: EmbeddingAdapter | None = None,
     cache_path: Path | None = None,
     event_bus: EventBus | None = None,
 ) -> ContextBuildResult:
@@ -268,12 +268,12 @@ async def build_context_async(
             candidates.append(candidate)
 
     semantic_scores: dict[str, float] = {}
-    semantic_client = embedding_client or OpenAICompatibleEmbeddingClient(
-        api_base=config.embedding_api_base,
-        api_key=config.api_key,
-        model=config.embedding_model,
-    )
     owns_semantic_client = embedding_client is None
+    if embedding_client is None:
+        semantic_client = await create_embedding_adapter(config)
+    else:
+        semantic_client = embedding_client
+        await semantic_client.validate()
 
     try:
         try:
