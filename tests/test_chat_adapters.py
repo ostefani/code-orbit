@@ -439,6 +439,9 @@ def test_openai_chat_probe_uses_models_list(monkeypatch) -> None:
 
     adapter = build_chat_adapter(config)
 
+    asyncio.run(adapter.validate())
+    assert len(AsyncOpenAI.instances) == 0
+
     asyncio.run(adapter.probe())
     assert len(AsyncOpenAI.instances) == 1
     instance = AsyncOpenAI.instances[0]
@@ -448,9 +451,6 @@ def test_openai_chat_probe_uses_models_list(monkeypatch) -> None:
     assert instance.model_calls[0]["op"] == "list"
     assert instance.calls == []
     asyncio.run(adapter.aclose())
-
-
-
 
 def test_probe_chat_adapter_skips_non_probing_adapters() -> None:
     adapter = FakeChatAdapter()
