@@ -1,0 +1,14 @@
+[
+  "Create button component with green background in react that accepts onClick callback and children. use css modules. provide code in json format",
+  "Change color of this button to red.",
+  "Create button component in react that accept onClick callback and children. use css modules. provide code in json format",
+  "Review files config.yaml and config.py. Provide updates to use api_base from profiles from the config.yaml in config.py. Use pathlib, not os",
+  "Review files config.yaml and config.py. Provide updates to use api_base from profiles from the yaml in config.py. Use pathlib, not os",
+  "Review files config.yaml and config.py. Provide updates to use api_base from the yaml in config.py",
+  "Review the project. It looks like now project will not work for ollama and lmstudio providers because of wrong api_base. Is this true?",
+  "Scaffold a normal react project and put this button in its own folder ButtonComponent",
+  "scafold the project: put this button to components and create another folder for containers",
+  "Make this button red. provide code in json format",
+  "Create button component with red background in react that accept onClick callback and children. use css modules. provide code in json format",
+  "Create button component in react that accept onClick callback and children. use css modules"
+]

@@ -1,11 +1,12 @@
 import asyncio
-
-import pytest
 from pathlib import Path
 
+import pytest
+
 from agent.config import Config
-from agent.context import _is_ignored, build_context_async
 from agent.events import EventBus
+from agent.context import build_context_async
+from agent.utils import _is_ignored
 
 
 @pytest.fixture
@@ -30,6 +31,29 @@ def test_is_ignored() -> None:
     assert _is_ignored(root / "src" / "main.py", root, patterns) is False
     assert _is_ignored(root / "node_modules" / "package", root, patterns) is True
     assert _is_ignored(root / "test.pyc", root, patterns) is True
+    assert _is_ignored(root / "package-lock.json", root, patterns) is True
+    assert _is_ignored(root / "__pycache__", root, patterns) is True
+
+
+def test_is_ignored_uses_relative_path_for_low_value_dirs() -> None:
+    root = Path("/home/user/build/myproject")
+    patterns: list[str] = []
+
+    assert _is_ignored(root / "src" / "main.py", root, patterns) is False
+
+
+def test_is_ignored_matches_low_value_dirs_case_insensitively() -> None:
+    root = Path("/root")
+    patterns: list[str] = []
+
+    assert _is_ignored(root / "Node_Modules" / "pkg", root, patterns) is True
+
+
+def test_is_ignored_pattern_uses_relative_path() -> None:
+    root = Path("/home/user/build/myproject")
+    patterns = ["build"]
+
+    assert _is_ignored(root / "src" / "main.py", root, patterns) is False
 
 
 def test_build_context(temp_codebase: Path) -> None:

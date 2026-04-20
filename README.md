@@ -108,6 +108,8 @@ python main.py --dir . --prompt "" --tree
 python main.py --dir . --prompt "..." --config config.local.yaml
 ```
 
+When you edit the plan, Code Orbit reads `EDITOR` as a command line rather than a shell string, so values like `vim -u NONE` or `code --wait` work. The launcher is currently tuned for Unix-like environments; if Windows support becomes a goal, the editor parsing strategy will need a small portability review because `shlex.split()` uses POSIX rules.
+
 Tokens are counted using `tokenizer_backend: estimate`. If you want to learn more on how to use tokenizers and improve tokens counting see TOKEN_COUNTING.md.
 
 ### All options
@@ -135,6 +137,8 @@ auto_commit: false # git commit after applying
 ```
 
 For personal overrides without affecting git, use `config.local.yaml` (already in `.gitignore`).
+
+Code Orbit also stores runtime artifacts under `.code-orbit/`, including the embeddings cache and prompt history. That directory is ignored in this repo by default, so you should not commit those generated files.
 
 ## Testing
 
@@ -175,21 +179,31 @@ llama-server \
   --model your-model.gguf \
   --port 8080 \
   --ctx-size 32768 \          # must match config.yaml max_context_tokens
-  --n-gpu-layers 99 \         # offload all layers to GPU
+  --n-gpu-layers -1 \         # offload all layers to GPU
   --threads 8 \               # CPU threads for non-GPU layers
   --batch-size 512            # prompt processing batch size
+  --embeddings \
+  --pooling mean
 ```
 
 ## Project structure
 
 ```
 code-orbit/
-├── main.py              # CLI entry point
+├── main.py              # CLI wrapper, history, prompt handling
 ├── agent/
 │   ├── config.py        # Config dataclass, YAML loading
 │   ├── context.py       # Directory walker, context builder
 │   ├── llm.py           # llama.cpp API client
 │   └── patcher.py       # Diff preview, file writer, git commit
+├── workflow/
+│   ├── __init__.py      # workflow entrypoint and orchestration
+│   ├── _state.py        # workflow state and runtime dataclass
+│   ├── context.py       # context-building stage
+│   ├── planning.py      # plan drafting and review stage
+│   ├── editing.py       # plan editing stage
+│   ├── execution.py     # coder execution and validation stage
+│   └── output.py        # preview / apply / commit stages
 ├── config.yaml          # Default config (commit this)
 ├── config.local.yaml    # Personal overrides (gitignored)
 ├── requirements.txt

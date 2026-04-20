@@ -146,12 +146,22 @@ class EventBus:
         self._subscribers.append(subscriber)
 
     def publish(self, event: AgentEvent[PayloadT]) -> AgentEvent[PayloadT]:
+        payload = event.payload
+        if is_dataclass(payload) and not isinstance(payload, type):
+            dataclass_params = getattr(type(payload), "__dataclass_params__", None)
+            if dataclass_params is not None and dataclass_params.frozen:
+                safe_payload = payload
+            else:
+                safe_payload = copy.deepcopy(payload)
+        else:
+            safe_payload = copy.deepcopy(payload)
+
         safe_event = AgentEvent(
             name=event.name,
             level=event.level,
             state=event.state,
             message=event.message,
-            payload=copy.deepcopy(event.payload),
+            payload=safe_payload,
             timestamp=event.timestamp,
         )
         for subscriber in self._subscribers:

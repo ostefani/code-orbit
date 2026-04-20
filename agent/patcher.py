@@ -176,9 +176,18 @@ def git_commit(
     root: str, message: str, files: list[str], event_bus: EventBus | None = None
 ) -> None:
     """Stage affected files and commit."""
+    root_path = Path(root).resolve()
+    relative_files: list[str] = []
+    for file_path in files:
+        candidate = Path(file_path)
+        if candidate.is_absolute():
+            relative_files.append(str(candidate.resolve().relative_to(root_path)))
+        else:
+            relative_files.append(str(candidate))
+
     try:
         subprocess.run(
-            ["git", "add"] + files, cwd=root, check=True, capture_output=True
+            ["git", "add"] + relative_files, cwd=root, check=True, capture_output=True
         )
         subprocess.run(
             ["git", "commit", "-m", f"[llm-agent] {message}"],
@@ -192,7 +201,7 @@ def git_commit(
                 state="committing",
                 message="Git commit created.",
                 payload=GitCommitSucceededPayload(
-                    files=tuple(files),
+                    files=tuple(relative_files),
                     summary=message,
                 ),
             ))

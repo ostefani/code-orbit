@@ -1,6 +1,6 @@
 import pytest
 from pathlib import Path
-from agent.patcher import apply_changes
+from agent.patcher import apply_changes, git_commit
 from agent.events import ApplyFilePayload, EventBus
 
 
@@ -57,3 +57,23 @@ def test_apply_changes_emits_events(temp_project):
     assert isinstance(events[0].payload, ApplyFilePayload)
     assert events[0].payload.path == "new.py"
     assert events[0].payload.action == "create"
+
+
+def test_git_commit_stages_relative_paths(temp_project, monkeypatch):
+    calls = []
+
+    def fake_run(cmd, cwd=None, check=None, capture_output=None):
+        calls.append((cmd, cwd, check, capture_output))
+        return __import__("subprocess").CompletedProcess(cmd, 0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr("agent.patcher.subprocess.run", fake_run)
+
+    git_commit(
+        str(temp_project),
+        "Add feature",
+        [str(temp_project / "existing.py"), str(temp_project / "new.py")],
+    )
+
+    assert calls[0][0] == ["git", "add", "existing.py", "new.py"]
+    assert calls[0][1] == str(temp_project)
+    assert calls[1][0] == ["git", "commit", "-m", "[llm-agent] Add feature"]

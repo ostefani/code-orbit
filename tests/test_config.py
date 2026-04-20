@@ -1,3 +1,4 @@
+from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 
 from agent.config import Config
@@ -42,3 +43,32 @@ def test_config_defaults_include_embedding_settings() -> None:
     assert config.embedding_api_base.startswith("http://localhost:")
     assert config.embedding_batch_size == 16
     assert config.embedding_max_concurrency == 4
+
+
+def test_config_is_immutable_after_construction() -> None:
+    config = Config()
+
+    try:
+        config.interactive = False
+    except FrozenInstanceError:
+        pass
+    else:
+        raise AssertionError("Expected Config to be frozen")
+
+
+def test_config_replace_preserves_original_instance() -> None:
+    base = Config(interactive=True, auto_commit=False, allow_delete=False)
+
+    overridden = replace(
+        base,
+        interactive=False,
+        auto_commit=True,
+        allow_delete=True,
+    )
+
+    assert base.interactive is True
+    assert base.auto_commit is False
+    assert base.allow_delete is False
+    assert overridden.interactive is False
+    assert overridden.auto_commit is True
+    assert overridden.allow_delete is True

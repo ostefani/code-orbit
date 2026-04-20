@@ -1,5 +1,5 @@
 # Project local history
-.code-orbit-history
+.code-orbit/history.json
 
 # Python
 __pycache__/
