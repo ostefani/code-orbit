@@ -33,7 +33,7 @@ class ChatAdapter(Protocol):
         generation: ChatGenerationSettings | None = None,
     ) -> ChatResponse: ...
 
-    async def stream(
+    def stream(
         self,
         messages: Sequence[ChatMessage],
         *,

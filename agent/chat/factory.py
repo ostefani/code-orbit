@@ -20,11 +20,6 @@ _CHAT_PROVIDER_BUILDERS: dict[str, str] = {
 
 
 def build_chat_provider_config(config: Config) -> ChatProviderConfig:
-    context_window = (
-        config.chat_context_window
-        if config.chat_context_window is not None
-        else config.max_context_tokens
-    )
     options = {
         key: value
         for key, value in dict(config.chat_provider_options).items()
@@ -35,7 +30,7 @@ def build_chat_provider_config(config: Config) -> ChatProviderConfig:
         api_base=config.chat_api_base or config.api_base,
         api_key=config.chat_api_key or config.api_key,
         model=config.chat_model or config.model,
-        context_window=context_window,
+        context_window=config.resolved_chat_context_window,
         streaming=config.chat_streaming,
         options=options,
     )

@@ -126,6 +126,12 @@ class Config:
         if chat_context_window <= 0:
             raise ValueError("chat_context_window must be greater than zero.")
 
+    @property
+    def resolved_chat_context_window(self) -> int:
+        if self.chat_context_window is not None:
+            return self.chat_context_window
+        return self.max_context_tokens
+
     @classmethod
     def load(
         cls, path: str | Path = "config.yaml", profile_name: Optional[str] = None

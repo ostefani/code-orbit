@@ -183,16 +183,17 @@ def _compute_context_budget(
     )
     scaffold_result = count_tokens(scaffold, config)
     scaffold_tokens = scaffold_result.count
+    context_window = config.resolved_chat_context_window
 
     if config.tokenizer_backend == "estimate":
         # Estimate backend is intentionally conservative.
-        safety_margin = max(128, int(config.chat_context_window * 0.10))
+        safety_margin = max(128, int(context_window * 0.10))
     else:
         # Exact tokenizers need only a small buffer for drift.
         safety_margin = 64
 
     file_budget = (
-        config.chat_context_window
+        context_window
         - config.max_response_tokens
         - scaffold_tokens
         - safety_margin
@@ -201,7 +202,7 @@ def _compute_context_budget(
 
     warnings = list(scaffold_result.warnings)
     if available_file_tokens == 0:
-        if config.max_response_tokens >= config.chat_context_window:
+        if config.max_response_tokens >= context_window:
             warnings.append(
                 "max_response_tokens leaves no room for file context. "
                 "Lower max_response_tokens or raise max_context_tokens."
@@ -216,7 +217,7 @@ def _compute_context_budget(
 
     return (
         ContextBudgetBreakdown(
-            context_window_tokens=config.chat_context_window,
+            context_window_tokens=context_window,
             response_reserve_tokens=config.max_response_tokens,
             scaffold_tokens=scaffold_tokens,
             safety_margin_tokens=safety_margin,
