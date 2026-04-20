@@ -118,9 +118,9 @@ def count_tokens(text: str, config: Config) -> TokenCountResult:
 
     # ── tokenizers_json (Gemma 4 / any HF fast-tokenizer) ────────────────────
     if backend == "tokenizers_json":
-        model_path: str | None = config.tokenizer_model_path
+        model_path: Path | None = config.tokenizer_model_path
 
-        if not model_path:
+        if model_path is None:
             estimate = _estimate(text)
             return TokenCountResult(
                 count=estimate.count,
@@ -131,7 +131,7 @@ def count_tokens(text: str, config: Config) -> TokenCountResult:
                 ),
             )
 
-        resolved = Path(model_path).expanduser().resolve()
+        resolved = model_path.expanduser().resolve()
         if not resolved.exists():
             estimate = _estimate(text)
             return TokenCountResult(
