@@ -51,6 +51,14 @@ async def run_build_context_stage(
             ),
         ))
 
+    context_window = (
+        runtime.context_result.budget_breakdown.context_window_tokens
+        if runtime.context_result.budget_breakdown is not None
+        else runtime.config.chat_context_window
+    )
+    if context_window is None:
+        raise ValueError("chat_context_window must be initialized.")
+
     event_bus.publish(AgentEvent(
         name="context.summary",
         state=WorkflowState.BUILDING_CONTEXT.value,
@@ -58,11 +66,7 @@ async def run_build_context_stage(
             file_count=len(runtime.context_result.entries),
             used_tokens=runtime.context_result.used_tokens,
             token_budget=runtime.context_result.token_budget,
-            context_window_tokens=(
-                runtime.context_result.budget_breakdown.context_window_tokens
-                if runtime.context_result.budget_breakdown is not None
-                else runtime.config.resolved_chat_context_window
-            ),
+            context_window_tokens=context_window,
             response_reserve_tokens=(
                 runtime.context_result.budget_breakdown.response_reserve_tokens
                 if runtime.context_result.budget_breakdown is not None

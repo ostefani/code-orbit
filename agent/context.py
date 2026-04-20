@@ -92,10 +92,6 @@ def _extract_prompt_terms(prompt: str) -> set[str]:
     return {word for word in words if len(word) > 1 and word not in STOPWORDS}
 
 
-def _score_file_entry(entry: FileEntry, prompt: str) -> float:
-    return _score_path(entry.path, entry.tokens, prompt)
-
-
 def _score_path(
     path: str,
     estimated_tokens: int,
@@ -183,7 +179,9 @@ def _compute_context_budget(
     )
     scaffold_result = count_tokens(scaffold, config)
     scaffold_tokens = scaffold_result.count
-    context_window = config.resolved_chat_context_window
+    context_window = config.chat_context_window
+    if context_window is None:
+        raise ValueError("chat_context_window must be initialized.")
 
     if config.tokenizer_backend == "estimate":
         # Estimate backend is intentionally conservative.
@@ -193,10 +191,7 @@ def _compute_context_budget(
         safety_margin = 64
 
     file_budget = (
-        context_window
-        - config.max_response_tokens
-        - scaffold_tokens
-        - safety_margin
+        context_window - config.max_response_tokens - scaffold_tokens - safety_margin
     )
     available_file_tokens = max(0, file_budget)
 
@@ -316,9 +311,9 @@ async def build_context_async(
             prompt,
             semantic_score=0.0,
         )
-        blended_score = lexical_score + max(
-            0.0, min(1.0, semantic_score)
-        ) * _SEMANTIC_SCORE_WEIGHT
+        blended_score = (
+            lexical_score + max(0.0, min(1.0, semantic_score)) * _SEMANTIC_SCORE_WEIGHT
+        )
         scored_candidates.append(
             (blended_score, candidate, lexical_score, semantic_score)
         )

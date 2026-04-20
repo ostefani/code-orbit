@@ -25,12 +25,15 @@ def build_chat_provider_config(config: Config) -> ChatProviderConfig:
         for key, value in dict(config.chat_provider_options).items()
         if key not in RESERVED_CHAT_PROVIDER_OPTION_KEYS
     }
+    context_window = config.chat_context_window
+    if context_window is None:
+        raise ValueError("chat_context_window must be initialized.")
     return ChatProviderConfig(
         provider=config.chat_provider,
         api_base=config.chat_api_base or config.api_base,
         api_key=config.chat_api_key or config.api_key,
         model=config.chat_model or config.model,
-        context_window=config.resolved_chat_context_window,
+        context_window=context_window,
         streaming=config.chat_streaming,
         options=options,
     )
