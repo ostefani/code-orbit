@@ -345,3 +345,92 @@ def test_vector_store_ranks_closest_chunk() -> None:
 
     assert results[0].path == "auth/middleware.py"
     assert results[0].score > results[1].score
+
+
+def test_vector_store_semantic_scores_use_best_chunk() -> None:
+    store = VectorStore(
+        records=[
+            FileEmbeddingRecord(
+                path="auth/middleware.py",
+                sha256="a",
+                chunks=(
+                    ChunkEmbedding(
+                        index=0,
+                        vector=(0.0, 1.0),
+                        start_line=1,
+                        end_line=2,
+                        content_hash="x",
+                    ),
+                    ChunkEmbedding(
+                        index=1,
+                        vector=(1.0, 0.0),
+                        start_line=3,
+                        end_line=4,
+                        content_hash="y",
+                    ),
+                ),
+            ),
+            FileEmbeddingRecord(
+                path="tests/test_rate.py",
+                sha256="b",
+                chunks=(
+                    ChunkEmbedding(
+                        index=0,
+                        vector=(0.0, 1.0),
+                        start_line=1,
+                        end_line=2,
+                        content_hash="z",
+                    ),
+                ),
+            ),
+        ]
+    )
+
+    scores = store.semantic_scores((1.0, 0.0))
+
+    assert scores["auth/middleware.py"] == 1.0
+    assert scores["tests/test_rate.py"] == 0.0
+
+
+def test_vector_store_builds_numpy_index_lazily() -> None:
+    store = VectorStore(
+        records=[
+            FileEmbeddingRecord(
+                path="auth/middleware.py",
+                sha256="a",
+                chunks=(
+                    ChunkEmbedding(
+                        index=0,
+                        vector=(1.0, 0.0),
+                        start_line=1,
+                        end_line=2,
+                        content_hash="x",
+                    ),
+                ),
+            ),
+        ]
+    )
+
+    build_calls = 0
+    original = store._build_numpy_index
+
+    def counting_build():
+        nonlocal build_calls
+        build_calls += 1
+        return original()
+
+    store._build_numpy_index = counting_build  # type: ignore[method-assign]
+
+    store.semantic_scores((1.0, 0.0))
+    store.semantic_scores((1.0, 0.0))
+    assert build_calls == 1
+
+    store.add(
+        FileEmbeddingRecord(
+            path="tests/test_rate.py",
+            sha256="b",
+            chunks=(),
+        )
+    )
+    store.semantic_scores((1.0, 0.0))
+    assert build_calls == 2

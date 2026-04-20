@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, Sequence, Self
 
+import numpy as np
+
 from .config import Config
 from .utils import _is_ignored, _is_within_root
 
@@ -60,6 +62,14 @@ class EmbeddingClient(Protocol):
     async def embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]: ...
 
 
+@dataclass(frozen=True)
+class _VectorStoreNumpyIndex:
+    record_paths: tuple[str, ...]
+    chunk_matrix: np.ndarray
+    chunk_path_ids: np.ndarray
+    chunk_norms: np.ndarray
+
+
 class OpenAICompatibleEmbeddingClient:
     def __init__(self, api_base: str, api_key: str, model: str) -> None:
         self.api_base = api_base.rstrip("/")
@@ -102,6 +112,7 @@ class VectorStore:
         self._records: dict[str, FileEmbeddingRecord] = {
             record.path: record for record in (records or [])
         }
+        self._numpy_index: _VectorStoreNumpyIndex | None = None
 
     @property
     def records(self) -> tuple[FileEmbeddingRecord, ...]:
@@ -109,46 +120,59 @@ class VectorStore:
 
     def add(self, record: FileEmbeddingRecord) -> None:
         self._records[record.path] = record
+        self._numpy_index = None
+
+    def _ensure_numpy_index(self) -> _VectorStoreNumpyIndex:
+        if self._numpy_index is None:
+            self._numpy_index = self._build_numpy_index()
+        return self._numpy_index
+
+    def _build_numpy_index(self) -> _VectorStoreNumpyIndex:
+        record_paths: list[str] = []
+        chunk_vectors: list[Sequence[float]] = []
+        chunk_path_ids: list[int] = []
+
+        for record_index, record in enumerate(self.records):
+            record_paths.append(record.path)
+            for chunk in sorted(record.chunks, key=lambda item: item.index):
+                chunk_vectors.append(chunk.vector)
+                chunk_path_ids.append(record_index)
+
+        if not chunk_vectors:
+            chunk_matrix = np.empty((0, 0), dtype=np.float64)
+            chunk_norms = np.empty((0,), dtype=np.float64)
+            chunk_path_ids_array = np.empty((0,), dtype=np.int64)
+        else:
+            chunk_matrix = np.asarray(chunk_vectors, dtype=np.float64)
+            chunk_norms = np.linalg.norm(chunk_matrix, axis=1)
+            chunk_path_ids_array = np.asarray(chunk_path_ids, dtype=np.int64)
+
+        return _VectorStoreNumpyIndex(
+            record_paths=tuple(record_paths),
+            chunk_matrix=chunk_matrix,
+            chunk_path_ids=chunk_path_ids_array,
+            chunk_norms=chunk_norms,
+        )
 
     def semantic_scores(self, query_vector: Sequence[float]) -> dict[str, float]:
-        try:
-            import numpy as np
-        except ImportError:
-            scores: dict[str, float] = {}
-            for record in self._records.values():
-                best_score = 0.0
-                for chunk in record.chunks:
-                    best_score = max(
-                        best_score,
-                        max(0.0, _cosine_similarity(query_vector, chunk.vector)),
-                    )
-                scores[record.path] = best_score
-            return scores
-
+        index = self._ensure_numpy_index()
         query = np.asarray(query_vector, dtype=np.float64)
         query_norm = float(np.linalg.norm(query))
         if query_norm < 1e-10:
-            return {record.path: 0.0 for record in self._records.values()}
+            return {path: 0.0 for path in index.record_paths}
 
-        scores: dict[str, float] = {}
-        for record in self._records.values():
-            if not record.chunks:
-                scores[record.path] = 0.0
-                continue
+        if index.chunk_matrix.size == 0:
+            return {path: 0.0 for path in index.record_paths}
 
-            matrix = np.asarray([chunk.vector for chunk in record.chunks], dtype=np.float64)
-            norms = np.linalg.norm(matrix, axis=1)
-            valid = norms > 1e-10
-            if not np.any(valid):
-                scores[record.path] = 0.0
-                continue
+        dot_products = index.chunk_matrix @ query
+        valid = index.chunk_norms > 1e-10
+        cosines = np.zeros(len(index.chunk_path_ids), dtype=np.float64)
+        cosines[valid] = dot_products[valid] / (index.chunk_norms[valid] * query_norm)
+        cosines = np.maximum(cosines, 0.0)
 
-            dot_products = matrix @ query
-            cosines = np.zeros(len(record.chunks), dtype=np.float64)
-            cosines[valid] = dot_products[valid] / (norms[valid] * query_norm)
-            scores[record.path] = float(np.max(np.maximum(cosines, 0.0)))
-
-        return scores
+        scores = np.zeros(len(index.record_paths), dtype=np.float64)
+        np.maximum.at(scores, index.chunk_path_ids, cosines)
+        return {path: float(score) for path, score in zip(index.record_paths, scores)}
 
     def score_path(self, path: str, query_vector: Sequence[float]) -> float:
         record = self._records.get(path)
