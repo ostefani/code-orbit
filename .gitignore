@@ -35,8 +35,10 @@ config.yaml.local
 # IDEs
 .vscode/
 .idea/
+
 .DS_Store
 .code-orbit
 .code-orbit-history
+config.local.yaml
 
 INNER_DOC/
