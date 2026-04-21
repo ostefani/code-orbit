@@ -6,7 +6,13 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
-from agent.events import AgentEvent, EmptyPayload, EventBus, PlanReadyPayload, StateChangedPayload
+from agent.events import (
+    AgentEvent,
+    EmptyPayload,
+    EventBus,
+    PlanReadyPayload,
+    StateChangedPayload,
+)
 from agent.llm import PlanSchema, call_architect
 
 from .errors import WorkflowError
@@ -39,7 +45,11 @@ def load_plan_draft(plan_path: Path) -> PlanSchema:
 def format_plan_for_display(plan: PlanSchema) -> str:
     lines = [f"[bold]{plan.summary}[/bold]"]
     if not plan.tasks:
-        lines.append("[dim]No implementation tasks were proposed.[/dim]")
+        if plan.answer:
+            lines.append("")
+            lines.append(plan.answer)
+        else:
+            lines.append("[dim]No implementation tasks were proposed.[/dim]")
         return "\n".join(lines)
 
     lines.append("")
@@ -58,12 +68,14 @@ async def run_planning_stage(
 ) -> WorkflowState:
     assert runtime.context_result is not None
 
-    event_bus.publish(AgentEvent(
-        name="state.changed",
-        state=WorkflowState.PLANNING.value,
-        message="Drafting implementation plan.",
-        payload=StateChangedPayload(),
-    ))
+    event_bus.publish(
+        AgentEvent(
+            name="state.changed",
+            state=WorkflowState.PLANNING.value,
+            message="Drafting implementation plan.",
+            payload=StateChangedPayload(),
+        )
+    )
     prompt = build_architect_prompt(runtime.prompt, runtime.execution_feedback)
     try:
         progress = Progress(
@@ -92,28 +104,32 @@ async def run_planning_stage(
                 on_chunk=on_plan_chunk,
             )
     except Exception as exc:
-        event_bus.publish(AgentEvent(
-            name="run.failed",
-            level="error",
-            state=WorkflowState.PLANNING.value,
-            message=str(exc),
-            payload=EmptyPayload(),
-        ))
+        event_bus.publish(
+            AgentEvent(
+                name="run.failed",
+                level="error",
+                state=WorkflowState.PLANNING.value,
+                message=str(exc),
+                payload=EmptyPayload(),
+            )
+        )
         raise WorkflowError(str(exc)) from exc
 
     if runtime.plan_path is None:
         runtime.plan_path = create_plan_draft_path()
     write_plan_draft(runtime.plan_path, runtime.architect_plan)
-    event_bus.publish(AgentEvent(
-        name="plan.ready",
-        state="reviewing_plan",
-        message="Implementation plan ready.",
-        payload=PlanReadyPayload(
-            summary=runtime.architect_plan.summary,
-            task_count=len(runtime.architect_plan.tasks),
-            draft_path=str(runtime.plan_path),
-        ),
-    ))
+    event_bus.publish(
+        AgentEvent(
+            name="plan.ready",
+            state="reviewing_plan",
+            message="Implementation plan ready.",
+            payload=PlanReadyPayload(
+                summary=runtime.architect_plan.summary,
+                task_count=len(runtime.architect_plan.tasks),
+                draft_path=str(runtime.plan_path),
+            ),
+        )
+    )
     runtime.console.print(
         Panel.fit(
             format_plan_for_display(runtime.architect_plan),
