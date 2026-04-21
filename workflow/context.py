@@ -60,6 +60,7 @@ async def run_build_context_stage(
     if context_window is None:
         context_window = require_chat_context_window(runtime.config)
 
+    budget = runtime.context_result.budget_breakdown
     event_bus.publish(AgentEvent(
         name="context.summary",
         state=WorkflowState.BUILDING_CONTEXT.value,
@@ -69,18 +70,18 @@ async def run_build_context_stage(
             token_budget=runtime.context_result.token_budget,
             context_window_tokens=context_window,
             response_reserve_tokens=(
-                runtime.context_result.budget_breakdown.response_reserve_tokens
-                if runtime.context_result.budget_breakdown is not None
+                budget.response_reserve_tokens
+                if budget is not None
                 else runtime.config.max_response_tokens
             ),
             scaffold_tokens=(
-                runtime.context_result.budget_breakdown.scaffold_tokens
-                if runtime.context_result.budget_breakdown is not None
+                budget.scaffold_tokens
+                if budget is not None
                 else 0
             ),
             safety_margin_tokens=(
-                runtime.context_result.budget_breakdown.safety_margin_tokens
-                if runtime.context_result.budget_breakdown is not None
+                budget.safety_margin_tokens
+                if budget is not None
                 else 0
             ),
         ),

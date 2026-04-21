@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field, fields as dataclass_fields
 from pathlib import Path
-from typing import Optional
+from typing import Any
 import yaml
 
 
@@ -20,13 +20,13 @@ class ConfigLoadResult:
 class Config:
     # llama.cpp server
     api_base: str = "http://localhost:8081/v1"
-    api_key: str = "dummy"
+    api_key: str = ""
     model: str = "local"
 
     # Chat provider for planning / code generation
     chat_provider: str = "openai"
     chat_api_base: str = "http://localhost:8081/v1"
-    chat_api_key: str = "dummy"
+    chat_api_key: str = ""
     chat_model: str = "local"
     chat_context_window: int | None = None
     chat_streaming: bool = True
@@ -47,8 +47,8 @@ class Config:
     max_response_tokens: int = 4096
     tokenizer_backend: str = "estimate"
 
-    tokenizer_model_path: Optional[Path] = None
-    tokenizer_model: Optional[str] = None
+    tokenizer_model_path: Path | None = None
+    tokenizer_model: str | None = None
 
     # Files to skip when building context
     ignore_patterns: tuple[str, ...] = field(
@@ -107,7 +107,9 @@ class Config:
         object.__setattr__(self, "ignore_patterns", patterns)
 
         tokenizer_model_path = self.tokenizer_model_path
-        if tokenizer_model_path is not None and not isinstance(tokenizer_model_path, Path):
+        if tokenizer_model_path is not None and not isinstance(
+            tokenizer_model_path, Path
+        ):
             object.__setattr__(self, "tokenizer_model_path", Path(tokenizer_model_path))
 
         if self.max_context_tokens <= 0:
@@ -128,18 +130,18 @@ class Config:
 
     @classmethod
     def load(
-        cls, path: str | Path = "config.yaml", profile_name: Optional[str] = None
+        cls, path: str | Path = "config.yaml", profile_name: str | None = None
     ) -> "Config":
         return cls.load_with_diagnostics(path, profile_name).config
 
     @classmethod
     def load_with_diagnostics(
-        cls, path: str | Path = "config.yaml", profile_name: Optional[str] = None
+        cls, path: str | Path = "config.yaml", profile_name: str | None = None
     ) -> ConfigLoadResult:
         config_path = Path(path).expanduser().resolve()
         messages: list[ConfigLoadMessage] = []
 
-        data: dict = {}
+        data: dict[str, Any] = {}
         if config_path.exists():
             data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
 
@@ -148,12 +150,10 @@ class Config:
             k: v for k, v in data.items() if k in valid_keys and k != "profiles"
         }
 
-        profiles: dict = data.get("profiles", {})
-        selected_profile_name: Optional[str] = profile_name or data.get(
-            "default_profile"
-        )
+        profiles: dict[str, Any] = data.get("profiles", {})
+        selected_profile_name: str | None = profile_name or data.get("default_profile")
 
-        profile_data: dict = {}
+        profile_data: dict[str, Any] = {}
         if selected_profile_name:
             if selected_profile_name in profiles:
                 profile_data = profiles[selected_profile_name]
@@ -163,6 +163,18 @@ class Config:
                         text=f"Using profile '{selected_profile_name}'",
                     )
                 )
+                unknown_keys = {k for k in profile_data if k not in valid_keys}
+                if unknown_keys:
+                    messages.append(
+                        ConfigLoadMessage(
+                            level="warning",
+                            text=(
+                                f"Profile '{selected_profile_name}' contains unknown "
+                                f"key(s) that will be ignored: "
+                                f"{', '.join(sorted(unknown_keys))}"
+                            ),
+                        )
+                    )
             else:
                 available = ", ".join(profiles.keys()) or "none"
                 messages.append(

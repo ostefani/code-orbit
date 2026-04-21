@@ -12,6 +12,7 @@ from agent.events import (
 from agent.llm import CodeResponseSchema, call_coder_for_task
 
 from ._state import (
+    FileChange,
     WorkflowRuntime,
     WorkflowState,
     require_approved_plan,
@@ -22,7 +23,7 @@ ALLOWED_ACTIONS = {"create", "update", "delete"}
 MAX_REPLAN_ATTEMPTS = 3
 
 
-def render_applied_changes_context(changes: list[dict[str, str]]) -> str:
+def render_applied_changes_context(changes: list[FileChange]) -> str:
     if not changes:
         return ""
 
@@ -39,7 +40,7 @@ def render_applied_changes_context(changes: list[dict[str, str]]) -> str:
     return "\n".join(blocks)
 
 
-def build_working_context(base_context: str, changes: list[dict[str, str]]) -> str:
+def build_working_context(base_context: str, changes: list[FileChange]) -> str:
     applied_changes_context = render_applied_changes_context(changes)
     if not applied_changes_context:
         return base_context
@@ -48,7 +49,7 @@ def build_working_context(base_context: str, changes: list[dict[str, str]]) -> s
 
 def format_execution_feedback(
     error: str,
-    partial_changes: list[dict[str, str]],
+    partial_changes: list[FileChange],
 ) -> str:
     parts = [f"Execution failed with error: {error}"]
     if partial_changes:
@@ -60,8 +61,8 @@ def format_execution_feedback(
 def validate_llm_result(
     result: CodeResponseSchema,
     config: Config,
-) -> tuple[str, list[dict[str, str]]]:
-    validated_changes: list[dict[str, str]] = []
+) -> tuple[str, list[FileChange]]:
+    validated_changes: list[FileChange] = []
     seen_paths: set[str] = set()
 
     for index, change in enumerate(result.changes, 1):
@@ -91,7 +92,7 @@ def validate_llm_result(
                     "Model proposed a delete action, but deletes are disabled. "
                     "Re-run with --allow-delete or set allow_delete: true in config."
                 )
-            validated_changes.append({"path": normalized_path, "action": action})
+            validated_changes.append(FileChange(path=normalized_path, action=action))
             continue
 
         # Defense-in-depth: the schema validator should already enforce this for
@@ -100,11 +101,7 @@ def validate_llm_result(
         if content is None:
             raise ValueError(f"Change #{index} action={action!r} requires content.")
         validated_changes.append(
-            {
-                "path": normalized_path,
-                "action": action,
-                "content": content,
-            }
+            FileChange(path=normalized_path, action=action, content=content)
         )
 
     return result.summary, validated_changes
