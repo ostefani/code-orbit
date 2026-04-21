@@ -2,6 +2,7 @@ import copy
 import json
 import logging
 import sys
+import traceback
 from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
@@ -168,7 +169,8 @@ class EventBus:
             try:
                 subscriber(safe_event)
             except Exception as exc:
-                print(f"Subscriber error: {exc}", file=sys.stderr)
+                tb = traceback.format_exc()
+                print(f"Subscriber error: {exc}\n{tb}", file=sys.stderr)
         return safe_event
 
     def emit(self, name: str, payload: PayloadT, **kwargs) -> AgentEvent[PayloadT]:
@@ -193,8 +195,18 @@ class JsonEventFormatter(logging.Formatter):
                 "message": event.message,
                 "payload": payload,
             }
-            return json.dumps(body, ensure_ascii=False)
-        return super().format(record)
+        else:
+            # Non-AgentEvent records: wrap in a uniform JSON envelope so the
+            # .jsonl file remains machine-parseable regardless of log source.
+            body = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "level": record.levelname.lower(),
+                "event": "log",
+                "state": None,
+                "message": record.getMessage(),
+                "payload": {},
+            }
+        return json.dumps(body, ensure_ascii=False)
 
 
 class LoggingEventSubscriber:

@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from typing import Required, TypedDict
 
 from rich.console import Console
 
@@ -22,6 +23,17 @@ class WorkflowState(str, Enum):
     FAILED = "failed"
 
 
+class FileChange(TypedDict, total=False):
+    """Represents a single file change produced by the coder model.
+
+    ``path`` and ``action`` are always present. ``content`` is present for
+    ``create`` and ``update`` actions and absent for ``delete`` actions.
+    """
+    path: Required[str]
+    action: Required[str]
+    content: str
+
+
 @dataclass
 class WorkflowRuntime:
     target_dir: str
@@ -33,7 +45,7 @@ class WorkflowRuntime:
     plan_path: Path | None = None
     architect_plan: PlanSchema | None = None
     approved_plan: PlanSchema | None = None
-    all_changes: list[dict[str, str]] = field(default_factory=list)
+    all_changes: list[FileChange] = field(default_factory=list)
     task_summaries: list[str] = field(default_factory=list)
     working_context: str = ""
     execution_feedback: str | None = None
