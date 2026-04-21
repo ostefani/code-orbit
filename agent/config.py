@@ -150,7 +150,10 @@ class Config:
             k: v for k, v in data.items() if k in valid_keys and k != "profiles"
         }
 
-        profiles: dict[str, Any] = data.get("profiles", {})
+        profiles_raw = data.get("profiles", {})
+        profiles: dict[str, dict[str, Any]] = (
+            profiles_raw if isinstance(profiles_raw, dict) else {}
+        )
         selected_profile_name: str | None = profile_name or data.get("default_profile")
 
         profile_data: dict[str, Any] = {}
