@@ -11,7 +11,13 @@ from pydantic import (
     model_validator,
 )
 
-from .chat import ChatAdapter, ChatGenerationSettings, ChatMessage, run_chat, stream_chat
+from .chat import (
+    ChatAdapter,
+    ChatGenerationSettings,
+    ChatMessage,
+    run_chat,
+    stream_chat,
+)
 from .config import Config
 
 ARCHITECT_SYSTEM_PROMPT = """\
@@ -24,6 +30,7 @@ RULES:
 2. The JSON must follow this exact schema:
    {
      "summary": "One sentence describing the overall plan.",
+     "answer": "Direct, complete answer to the user when no code changes are needed (e.g. the request is a question, a shell command, or an explanation). Omit this field (or set to null) when implementation tasks are present.",
      "tasks": [
        {
          "files": ["relative/path/to/file.py"],
@@ -32,11 +39,13 @@ RULES:
        }
      ]
    }
-3. Do not write raw code, diffs, or full file contents.
+3. Do not write raw code, diffs, or full file contents inside tasks.
 4. Keep tasks high-level and implementation-oriented.
 5. Only reference repository-relative file paths.
 6. Include only tasks that materially contribute to the requested change.
-7. If no code change is needed, return an empty tasks list with a clear summary.
+7. If no code change is needed, return an empty tasks list and put the full,
+   helpful response to the user in the "answer" field. The answer must directly
+   address the user's request — do not just state that no changes are needed.
 """
 
 CODER_SYSTEM_PROMPT = """\
@@ -111,6 +120,7 @@ class PlanSchema(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     summary: str = Field(min_length=1)
+    answer: str | None = Field(default=None)
     tasks: list[PlanTaskSchema] = Field(default_factory=list)
 
 
