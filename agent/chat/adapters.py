@@ -1,7 +1,7 @@
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence, AsyncGenerator
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Protocol, runtime_checkable
+from typing import ClassVar, Protocol, runtime_checkable
 
 from pydantic import SecretStr
 
@@ -26,12 +26,8 @@ RESERVED_CHAT_PROVIDER_OPTION_KEYS = frozenset(
 )
 
 
-class CloseableChatStream(AsyncIterator[ChatDelta], Protocol):
-    async def aclose(self) -> None: ...
-
-
 class ChatAdapter(Protocol):
-    capabilities: AdapterCapabilities
+    capabilities: ClassVar[AdapterCapabilities]
     context_window: int
 
     async def complete(
@@ -46,7 +42,7 @@ class ChatAdapter(Protocol):
         messages: Sequence[ChatMessage],
         *,
         generation: ChatGenerationSettings | None = None,
-    ) -> CloseableChatStream: ...
+    ) -> AsyncGenerator[ChatDelta, None]: ...
 
     async def validate(self) -> None: ...
 
