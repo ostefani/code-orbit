@@ -6,7 +6,7 @@
 ![Type](https://img.shields.io/badge/type-CLI-informational)
 ![License](https://img.shields.io/badge/license-MIT-success)
 
-A local, agentic code editor compatible with any OpenAI-compatible local LLM provider ([llama.cpp](https://github.com/ggerganov/llama.cpp), [Ollama](https://ollama.com), [LM Studio](https://lmstudio.ai)). Point it at any directory, give it a prompt, and it reads your codebase, plans changes, shows you a diff, and applies them.
+A local, agentic code editor compatible with any OpenAI-compatible local LLM provider ([llama.cpp](https://github.com/ggerganov/llama.cpp), [Ollama](https://ollama.com), [LM Studio](https://lmstudio.ai)). Supports Point it at any directory, give it a prompt, and it reads your codebase, plans changes, shows you a diff, and applies them.
 
 No cloud. No Docker. No API keys.
 
@@ -70,17 +70,18 @@ llama-server \
   --model /path/to/your-model.gguf \
   --port 8080 \
   --ctx-size 32768 \
-  --n-gpu-layers 99
+  --n-gpu-layers -1
 
-# 5. Copy and edit config
-cp config.yaml config.local.yaml   # optional — config.yaml works as-is
+# Get model name for configs
+curl http://localhost:<PORT>/v1/models | jq '.data[].id'
+
+# 5. Copy and fill config with your data
+cp config.yaml config.local.yaml
 
 # 6. Configure chat and embeddings (Optional)
-Chat now goes through a provider adapter layer selected from config. The
-current implementation ships with an OpenAI/OpenAI-compatible chat adapter,
-and orchestration code does not need provider-specific branches.
+# Chat goes through a provider adapter layer selected from config. The
+# current implementation ships with an OpenAI/OpenAI-compatible chat adapter.
 
-```yaml
 chat_provider: openai
 chat_api_base: http://localhost:8081/v1
 chat_api_key: dummy
@@ -103,6 +104,7 @@ embedding_provider_options:
 settings belong in the matching `*_provider_options` mapping.
 
 Chat lifecycle at a glance:
+
 - `build_chat_adapter()` constructs an unvalidated adapter.
 - `validate_chat_adapter()` runs local checks only.
 - `probe_chat_adapter()` performs an optional live readiness check for
@@ -119,18 +121,20 @@ embedding request at startup to verify credentials and reachability. Leave it
 off to keep startup cheap and let the first semantic operation hit the backend.
 
 ### Using other local providers (Optional)
+
 Code Orbit still works with any OpenAI-compatible local server.
 
 **Ollama**
+
 1. Start Ollama and pull your model.
 2. Update `config.yaml` or use the `--profile ollama` flag.
 3. Set `chat_api_base: http://localhost:11434/v1` and `chat_model` to the model name you pulled.
 
 **LM Studio**
+
 1. Open LM Studio and start the "Local Server".
 2. Set `chat_api_base: http://localhost:1234/v1` in your config.
 3. Use the model identifier provided by LM Studio in the `chat_model` field.
-```
 
 ## Usage
 
@@ -218,8 +222,6 @@ These models are optimized for the agentic workflows, long context, and structur
 | `qwen3-coder-30b` | 30B (3B active) | 256K    | **Best overall for coding.** State-of-the-art MoE with 128 experts for agentic tool use.  |
 | `qwen3.6-plus`    | (Varies)        | 1M      | Specialized **reasoning** model built for step-by-step execution and long-form workflows. |
 | `gemma-4-26b-a4b` | 26B (4B active) | 256K    | Extreme MoE efficiency; delivers 27B-class intelligence at 4B compute cost.               |
-| `gpt-oss-20b`     | 21B             | 128K    | High-performance open model from Oracle/OpenAI for STEM and coding.                       |
-| `phi-4`           | 14B             | 64K     | Dense reasoning powerhouse; excels at complex math and scientific logic.                  |
 | `gemma-4-e4b`     | 4B              | 128K    | Fast, mobile-first model with native multimodal (audio/vision) capabilities.              |
 
 ---
