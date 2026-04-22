@@ -1,7 +1,10 @@
 import asyncio
 import types
+from collections.abc import AsyncGenerator, Sequence
+from typing import ClassVar, TypedDict, cast
 
 import pytest
+from pydantic import SecretStr
 
 from agent.chat import (
     AdapterCapabilities,
@@ -24,13 +27,37 @@ from agent.chat import (
 )
 from agent.chat import factory as chat_factory
 from agent.chat import orchestrator as chat_orchestrator
+
 from agent.chat.providers import openai as openai_provider
 from agent.chat.providers.openai import OpenAIChatAdapter
 from agent.config import Config
 
 
+class CompletionRecord(TypedDict):
+    messages: list[ChatMessage]
+    generation: ChatGenerationSettings | None
+
+
+class StreamRecord(TypedDict):
+    messages: list[ChatMessage]
+    generation: ChatGenerationSettings | None
+
+
+class OpenAICallRecord(TypedDict):
+    model: str
+    messages: list[dict[str, str]]
+    max_tokens: int | None
+    temperature: float | None
+    response_format: dict[str, str] | None
+    stream: bool
+
+
+class ModelCallRecord(TypedDict):
+    op: str
+
+
 class FakeChatAdapter:
-    capabilities = AdapterCapabilities(
+    capabilities: ClassVar[AdapterCapabilities] = AdapterCapabilities(
         chat=True,
         streaming=True,
         embeddings=False,
@@ -39,15 +66,15 @@ class FakeChatAdapter:
     provider_name = "fake"
 
     def __init__(self) -> None:
-        self.completed: list[dict[str, object]] = []
-        self.streamed: list[dict[str, object]] = []
+        self.completed: list[CompletionRecord] = []
+        self.streamed: list[StreamRecord] = []
         self.validates = 0
         self.closed = False
         self.context_window = 8192
 
     async def complete(
         self,
-        messages,
+        messages: Sequence[ChatMessage],
         *,
         generation: ChatGenerationSettings | None = None,
     ) -> ChatResponse:
@@ -65,10 +92,10 @@ class FakeChatAdapter:
 
     async def stream(
         self,
-        messages,
+        messages: Sequence[ChatMessage],
         *,
         generation: ChatGenerationSettings | None = None,
-    ):
+    ) -> AsyncGenerator[ChatDelta, None]:
         self.streamed.append(
             {
                 "messages": list(messages),
@@ -86,7 +113,7 @@ class FakeChatAdapter:
 
 
 class FakeNonStreamingChatAdapter(FakeChatAdapter):
-    capabilities = AdapterCapabilities(
+    capabilities: ClassVar[AdapterCapabilities] = AdapterCapabilities(
         chat=True,
         streaming=False,
         embeddings=False,
@@ -172,8 +199,8 @@ def _install_fake_openai(monkeypatch, *, error: Exception | None = None):
 
         def __init__(self, **kwargs):
             self.kwargs = kwargs
-            self.calls: list[dict[str, object]] = []
-            self.model_calls: list[dict[str, object]] = []
+            self.calls: list[OpenAICallRecord] = []
+            self.model_calls: list[ModelCallRecord] = []
             self.closed_via: str | None = None
             type(self).instances.append(self)
 
@@ -271,17 +298,33 @@ def _install_fake_openai(monkeypatch, *, error: Exception | None = None):
     AsyncOpenAI.error = error
     monkeypatch.setattr(openai_provider, "_OPENAI_AVAILABLE", True, raising=False)
     monkeypatch.setattr(openai_provider, "_AsyncOpenAI", AsyncOpenAI, raising=False)
-    monkeypatch.setattr(openai_provider, "_APIConnectionError", APIConnectionError, raising=False)
+    monkeypatch.setattr(
+        openai_provider, "_APIConnectionError", APIConnectionError, raising=False
+    )
     monkeypatch.setattr(openai_provider, "_APIError", APIError, raising=False)
-    monkeypatch.setattr(openai_provider, "_APIStatusError", APIStatusError, raising=False)
-    monkeypatch.setattr(openai_provider, "_APITimeoutError", APITimeoutError, raising=False)
-    monkeypatch.setattr(openai_provider, "_AuthenticationError", AuthenticationError, raising=False)
-    monkeypatch.setattr(openai_provider, "_BadRequestError", BadRequestError, raising=False)
+    monkeypatch.setattr(
+        openai_provider, "_APIStatusError", APIStatusError, raising=False
+    )
+    monkeypatch.setattr(
+        openai_provider, "_APITimeoutError", APITimeoutError, raising=False
+    )
+    monkeypatch.setattr(
+        openai_provider, "_AuthenticationError", AuthenticationError, raising=False
+    )
+    monkeypatch.setattr(
+        openai_provider, "_BadRequestError", BadRequestError, raising=False
+    )
     monkeypatch.setattr(openai_provider, "_ConflictError", ConflictError, raising=False)
-    monkeypatch.setattr(openai_provider, "_InternalServerError", InternalServerError, raising=False)
+    monkeypatch.setattr(
+        openai_provider, "_InternalServerError", InternalServerError, raising=False
+    )
     monkeypatch.setattr(openai_provider, "_NotFoundError", NotFoundError, raising=False)
-    monkeypatch.setattr(openai_provider, "_PermissionDeniedError", PermissionDeniedError, raising=False)
-    monkeypatch.setattr(openai_provider, "_RateLimitError", RateLimitError, raising=False)
+    monkeypatch.setattr(
+        openai_provider, "_PermissionDeniedError", PermissionDeniedError, raising=False
+    )
+    monkeypatch.setattr(
+        openai_provider, "_RateLimitError", RateLimitError, raising=False
+    )
     return AsyncOpenAI, AuthenticationError, RateLimitError
 
 
@@ -290,10 +333,16 @@ def test_chat_adapter_contract_with_fake_adapter() -> None:
 
     asyncio.run(_assert_chat_adapter_contract(adapter))
 
+    completed_generation = adapter.completed[0]["generation"]
+    streamed_generation = adapter.streamed[0]["generation"]
+
+    assert completed_generation is not None
+    assert streamed_generation is not None
+
     assert adapter.validates == 1
-    assert adapter.completed[0]["generation"].max_tokens == 32
-    assert adapter.completed[0]["generation"].response_format == "json_object"
-    assert adapter.streamed[0]["generation"].temperature == 0.2
+    assert completed_generation.max_tokens == 32
+    assert completed_generation.response_format == "json_object"
+    assert streamed_generation.temperature == 0.2
     assert adapter.closed is True
 
 
@@ -304,7 +353,7 @@ def test_openai_chat_adapter_contract(monkeypatch) -> None:
         ChatProviderConfig(
             provider="openai",
             api_base="http://chat.example/v1",
-            api_key="chat-secret",
+            api_key=SecretStr("chat-secret"),
             model="chat-model",
             context_window=4096,
             streaming=True,
@@ -336,18 +385,18 @@ def test_openai_chat_validate_makes_no_network_call(monkeypatch) -> None:
         ChatProviderConfig(
             provider="openai",
             api_base="http://chat.example/v1",
-            api_key="chat-secret",
+            api_key=SecretStr("chat-secret"),
             model="chat-model",
             context_window=4096,
             streaming=True,
-            options={"timeout": 9},
+            options={},
         )
     )
 
     asyncio.run(adapter.validate())
     assert len(AsyncOpenAI.instances) == 0
 
-    asyncio.run(adapter.probe())
+    asyncio.run(chat_factory.probe_chat_adapter(adapter))
     assert len(AsyncOpenAI.instances) == 1
     assert AsyncOpenAI.instances[0].model_calls[0]["op"] == "list"
     assert AsyncOpenAI.instances[0].calls == []
@@ -363,7 +412,7 @@ def test_openai_chat_adapter_reports_unavailable_package(monkeypatch) -> None:
         ChatProviderConfig(
             provider="openai",
             api_base="http://chat.example/v1",
-            api_key="chat-secret",
+            api_key=SecretStr("chat-secret"),
             model="chat-model",
             context_window=4096,
             streaming=True,
@@ -442,7 +491,7 @@ def test_openai_chat_probe_uses_models_list(monkeypatch) -> None:
     asyncio.run(adapter.validate())
     assert len(AsyncOpenAI.instances) == 0
 
-    asyncio.run(adapter.probe())
+    asyncio.run(chat_factory.probe_chat_adapter(adapter))
     assert len(AsyncOpenAI.instances) == 1
     instance = AsyncOpenAI.instances[0]
     assert instance.kwargs["base_url"] == "http://chat.example/v1"
@@ -451,6 +500,7 @@ def test_openai_chat_probe_uses_models_list(monkeypatch) -> None:
     assert instance.model_calls[0]["op"] == "list"
     assert instance.calls == []
     asyncio.run(adapter.aclose())
+
 
 def test_probe_chat_adapter_skips_non_probing_adapters() -> None:
     adapter = FakeChatAdapter()
@@ -467,7 +517,7 @@ def test_chat_factory_rejects_missing_api_key() -> None:
         ChatProviderConfig(
             provider="openai",
             api_base="http://chat.example/v1",
-            api_key="",
+            api_key=SecretStr(""),
             model="chat-model",
             context_window=4096,
             streaming=True,
@@ -550,9 +600,7 @@ def test_chat_factory_rejects_openai_errors(monkeypatch) -> None:
     adapter = build_chat_adapter(config)
 
     with pytest.raises(ProviderAuthenticationError):
-        asyncio.run(
-            adapter.probe()
-        )
+        asyncio.run(chat_factory.probe_chat_adapter(adapter))
 
     AsyncOpenAI.error = RateLimitError("rate limited")
     with pytest.raises(ProviderRateLimitError):
