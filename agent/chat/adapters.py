@@ -3,6 +3,8 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Protocol, runtime_checkable
 
+from pydantic import SecretStr
+
 from .types import (
     AdapterCapabilities,
     ChatDelta,
@@ -12,14 +14,20 @@ from .types import (
 )
 
 
-RESERVED_CHAT_PROVIDER_OPTION_KEYS = {
-    "api_base",
-    "base_url",
-    "api_key",
-    "model",
-    "context_window",
-    "streaming",
-}
+RESERVED_CHAT_PROVIDER_OPTION_KEYS = frozenset(
+    (
+        "api_base",
+        "base_url",
+        "api_key",
+        "model",
+        "context_window",
+        "streaming",
+    )
+)
+
+
+class CloseableChatStream(AsyncIterator[ChatDelta], Protocol):
+    async def aclose(self) -> None: ...
 
 
 class ChatAdapter(Protocol):
@@ -38,7 +46,7 @@ class ChatAdapter(Protocol):
         messages: Sequence[ChatMessage],
         *,
         generation: ChatGenerationSettings | None = None,
-    ) -> AsyncIterator[ChatDelta]: ...
+    ) -> CloseableChatStream: ...
 
     async def validate(self) -> None: ...
 
@@ -50,11 +58,11 @@ class ProbingChatAdapter(Protocol):
     async def probe(self) -> None: ...
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ChatProviderConfig:
     provider: str
     api_base: str
-    api_key: str
+    api_key: SecretStr
     model: str
     context_window: int
     streaming: bool
