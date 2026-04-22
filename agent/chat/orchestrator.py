@@ -1,5 +1,5 @@
-from collections.abc import AsyncIterator, Sequence, AsyncGenerator
-from contextlib import asynccontextmanager, aclosing
+from collections.abc import AsyncIterator, Sequence
+from contextlib import aclosing, asynccontextmanager
 
 from ..config import Config
 from .adapters import ChatAdapter
@@ -11,10 +11,11 @@ from .types import ChatDelta, ChatGenerationSettings, ChatMessage, ChatResponse
 async def _chat_adapter_context(
     config: Config,
     adapter: ChatAdapter | None,
-) -> AsyncGenerator[ChatAdapter, None]:
+) -> AsyncIterator[ChatAdapter]:
     if adapter is not None:
         yield adapter
         return
+
     chat_adapter = build_chat_adapter(config)
     try:
         yield chat_adapter
