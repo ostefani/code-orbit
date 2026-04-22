@@ -1,4 +1,4 @@
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence, AsyncGenerator
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Protocol, runtime_checkable
@@ -38,7 +38,7 @@ class ChatAdapter(Protocol):
         messages: Sequence[ChatMessage],
         *,
         generation: ChatGenerationSettings | None = None,
-    ) -> AsyncIterator[ChatDelta]: ...
+    ) -> AsyncGenerator[ChatDelta, None]: ...
 
     async def validate(self) -> None: ...
 
