@@ -1,5 +1,7 @@
-from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
+
+import pytest
+from pydantic import ValidationError
 
 from agent.config import Config
 
@@ -85,22 +87,20 @@ def test_config_allows_custom_structured_llm_retry_delay() -> None:
 def test_config_is_immutable_after_construction() -> None:
     config = Config()
 
-    try:
+    with pytest.raises(ValidationError):
         config.interactive = False
-    except FrozenInstanceError:
-        pass
-    else:
-        raise AssertionError("Expected Config to be frozen")
 
 
-def test_config_replace_preserves_original_instance() -> None:
+def test_config_validate_preserves_original_instance() -> None:
     base = Config(interactive=True, auto_commit=False, allow_delete=False)
 
-    overridden = replace(
-        base,
-        interactive=False,
-        auto_commit=True,
-        allow_delete=True,
+    overridden = Config.model_validate(
+        base.model_dump()
+        | {
+            "interactive": False,
+            "auto_commit": True,
+            "allow_delete": True,
+        }
     )
 
     assert base.interactive is True
@@ -109,3 +109,13 @@ def test_config_replace_preserves_original_instance() -> None:
     assert overridden.interactive is False
     assert overridden.auto_commit is True
     assert overridden.allow_delete is True
+
+
+def test_config_normalizes_relative_tokenizer_model_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    config = Config(tokenizer_model_path="models/tokenizer.json")
+
+    assert config.tokenizer_model_path == (tmp_path / "models" / "tokenizer.json")

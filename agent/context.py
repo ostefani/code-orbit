@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import Config, require_chat_context_window
+from .config import Config
 from .constants import (
     CONFIG_HINTS,
     LOW_VALUE_DIRS,
@@ -247,7 +247,7 @@ def _compute_context_budget(
     )
     scaffold_result = count_tokens(scaffold, config)
     scaffold_tokens = scaffold_result.count
-    context_window = require_chat_context_window(config)
+    context_window = config.chat_context_window
 
     if config.tokenizer_backend == "estimate":
         # Estimate backend is intentionally conservative.

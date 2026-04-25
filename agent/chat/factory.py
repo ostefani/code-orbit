@@ -2,7 +2,7 @@ import importlib
 from collections.abc import Callable
 from pydantic import SecretStr
 
-from ..config import Config, require_chat_context_window
+from ..config import Config
 from .adapters import (
     RESERVED_CHAT_PROVIDER_OPTION_KEYS,
     ChatAdapter,
@@ -31,7 +31,7 @@ def build_chat_provider_config(config: Config) -> ChatProviderConfig:
         api_base=config.chat_api_base or config.api_base,
         api_key=SecretStr(config.chat_api_key or config.api_key),
         model=config.chat_model or config.model,
-        context_window=require_chat_context_window(config),
+        context_window=config.chat_context_window,
         streaming=config.chat_streaming,
         options=options,
     )

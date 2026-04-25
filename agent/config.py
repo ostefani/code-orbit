@@ -1,7 +1,10 @@
-from dataclasses import dataclass, field, fields as dataclass_fields
+from dataclasses import dataclass
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
+
 import yaml
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 @dataclass(frozen=True)
@@ -16,8 +19,50 @@ class ConfigLoadResult:
     messages: tuple[ConfigLoadMessage, ...] = ()
 
 
-@dataclass(frozen=True)
-class Config:
+DEFAULT_IGNORE_PATTERNS: tuple[str, ...] = (
+    ".git",
+    "__pycache__",
+    "*.pyc",
+    "node_modules",
+    ".venv",
+    "venv",
+    "env",
+    ".code-orbit",
+    "dist",
+    "build",
+    "*.egg-info",
+    ".DS_Store",
+    "*.lock",
+    "*.png",
+    "*.jpg",
+    "*.jpeg",
+    "*.gif",
+    "*.ico",
+    "*.pdf",
+    "*.zip",
+    "*.tar",
+    "*.gz",
+    "*.min.js",
+    "*.min.css",
+)
+
+
+def _resolve_tokenizer_model_path(
+    raw_path: Path | str, base_dir: Path | None = None
+) -> Path:
+    path = Path(raw_path).expanduser()
+    if not path.is_absolute():
+        path = ((base_dir or Path.cwd()) / path).resolve()
+    else:
+        path = path.resolve()
+    return path
+
+
+class Config(BaseModel):
+    """Immutable runtime configuration for the agent."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
     # llama.cpp server
     api_base: str = "http://localhost:8081/v1"
     api_key: str = ""
@@ -28,10 +73,10 @@ class Config:
     chat_api_base: str = "http://localhost:8081/v1"
     chat_api_key: str = ""
     chat_model: str = "local"
-    chat_context_window: int | None = None
+    chat_context_window: int = 16384
     chat_streaming: bool = True
     chat_probe_on_startup: bool = False
-    chat_provider_options: dict[str, object] = field(default_factory=dict)
+    chat_provider_options: dict[str, object] = Field(default_factory=dict)
 
     # Embeddings for semantic retrieval / RAG
     embedding_provider: str = "openai"
@@ -41,7 +86,7 @@ class Config:
     embedding_batch_size: int = 16
     embedding_max_concurrency: int = 4
     embedding_probe_on_startup: bool = False
-    embedding_provider_options: dict[str, object] = field(default_factory=dict)
+    embedding_provider_options: dict[str, object] = Field(default_factory=dict)
 
     max_context_tokens: int = 16384
     max_response_tokens: int = 4096
@@ -54,34 +99,7 @@ class Config:
     tokenizer_model: str | None = None
 
     # Files to skip when building context
-    ignore_patterns: tuple[str, ...] = field(
-        default_factory=lambda: (
-            ".git",
-            "__pycache__",
-            "*.pyc",
-            "node_modules",
-            ".venv",
-            "venv",
-            "env",
-            ".code-orbit",
-            "dist",
-            "build",
-            "*.egg-info",
-            ".DS_Store",
-            "*.lock",
-            "*.png",
-            "*.jpg",
-            "*.jpeg",
-            "*.gif",
-            "*.ico",
-            "*.pdf",
-            "*.zip",
-            "*.tar",
-            "*.gz",
-            "*.min.js",
-            "*.min.css",
-        )
-    )
+    ignore_patterns: tuple[str, ...] = DEFAULT_IGNORE_PATTERNS
 
     # Max file size to include in context (bytes)
     max_file_size: int = 100_000
@@ -92,29 +110,44 @@ class Config:
 
     allow_delete: bool = False
 
-    def __post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "embedding_provider",
-            (self.embedding_provider or "openai").strip().lower(),
-        )
-        object.__setattr__(
-            self,
-            "chat_provider",
-            (self.chat_provider or "openai").strip().lower(),
-        )
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_input(cls, data: Any) -> Any:
+        if isinstance(data, cls):
+            data = data.model_dump()
+        if not isinstance(data, Mapping):
+            return data
 
-        patterns = tuple(self.ignore_patterns)
-        if ".code-orbit" not in patterns:
-            patterns = patterns + (".code-orbit",)
-        object.__setattr__(self, "ignore_patterns", patterns)
+        normalized = dict(data)
 
-        tokenizer_model_path = self.tokenizer_model_path
-        if tokenizer_model_path is not None and not isinstance(
-            tokenizer_model_path, Path
-        ):
-            object.__setattr__(self, "tokenizer_model_path", Path(tokenizer_model_path))
+        for key in ("embedding_provider", "chat_provider"):
+            value = normalized.get(key)
+            if value is not None:
+                normalized[key] = str(value).strip().lower()
 
+        raw_path = normalized.get("tokenizer_model_path")
+        if raw_path is not None:
+            normalized["tokenizer_model_path"] = _resolve_tokenizer_model_path(
+                raw_path
+            )
+
+        patterns = normalized.get("ignore_patterns")
+        if patterns is not None:
+            normalized_patterns = tuple(patterns)
+            if ".code-orbit" not in normalized_patterns:
+                normalized_patterns = normalized_patterns + (".code-orbit",)
+            normalized["ignore_patterns"] = normalized_patterns
+
+        if normalized.get("chat_context_window") is None:
+            normalized["chat_context_window"] = normalized.get(
+                "max_context_tokens",
+                cls.model_fields["max_context_tokens"].default,
+            )
+
+        return normalized
+
+    @model_validator(mode="after")
+    def _validate_ranges(self) -> "Config":
         if self.max_context_tokens <= 0:
             raise ValueError("max_context_tokens must be greater than zero.")
         if self.max_response_tokens < 0:
@@ -132,12 +165,9 @@ class Config:
             raise ValueError(
                 "structured_llm_retry_delay_seconds must not be negative."
             )
-        chat_context_window = self.chat_context_window
-        if chat_context_window is None:
-            chat_context_window = self.max_context_tokens
-            object.__setattr__(self, "chat_context_window", chat_context_window)
-        if chat_context_window <= 0:
+        if self.chat_context_window <= 0:
             raise ValueError("chat_context_window must be greater than zero.")
+        return self
 
     @classmethod
     def load(
@@ -156,7 +186,7 @@ class Config:
         if config_path.exists():
             data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
 
-        valid_keys = {f.name for f in dataclass_fields(cls)}
+        valid_keys = set(cls.model_fields)
         base_params = {
             k: v for k, v in data.items() if k in valid_keys and k != "profiles"
         }
@@ -205,22 +235,9 @@ class Config:
 
         raw_path = merged.get("tokenizer_model_path")
         if raw_path is not None:
-            p = Path(raw_path).expanduser()
-            if not p.is_absolute():
-                p = (config_path.parent / p).resolve()
-            else:
-                p = p.resolve()
-            merged["tokenizer_model_path"] = p
+            merged["tokenizer_model_path"] = _resolve_tokenizer_model_path(
+                raw_path, config_path.parent
+            )
 
         valid_params = {k: v for k, v in merged.items() if k in valid_keys}
-        return ConfigLoadResult(
-            config=cls(**valid_params),
-            messages=tuple(messages),
-        )
-
-
-def require_chat_context_window(config: Config) -> int:
-    chat_context_window = config.chat_context_window
-    if chat_context_window is None:
-        raise ValueError("chat_context_window must be initialized.")
-    return chat_context_window
+        return ConfigLoadResult(config=cls.model_validate(valid_params), messages=tuple(messages))
