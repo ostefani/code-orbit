@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validator
 
 
 @dataclass(frozen=True)
@@ -112,9 +112,7 @@ class Config(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _normalize_input(cls, data: Any) -> Any:
-        if isinstance(data, cls):
-            data = data.model_dump()
+    def _normalize_input(cls, data: Any, info: ValidationInfo) -> Any:
         if not isinstance(data, Mapping):
             return data
 
@@ -127,8 +125,9 @@ class Config(BaseModel):
 
         raw_path = normalized.get("tokenizer_model_path")
         if raw_path is not None:
+            base_dir = info.context.get("base_dir") if info.context else None
             normalized["tokenizer_model_path"] = _resolve_tokenizer_model_path(
-                raw_path
+                raw_path, base_dir
             )
 
         patterns = normalized.get("ignore_patterns")
@@ -233,11 +232,11 @@ class Config(BaseModel):
 
         merged = {**base_params, **profile_data}
 
-        raw_path = merged.get("tokenizer_model_path")
-        if raw_path is not None:
-            merged["tokenizer_model_path"] = _resolve_tokenizer_model_path(
-                raw_path, config_path.parent
-            )
-
         valid_params = {k: v for k, v in merged.items() if k in valid_keys}
-        return ConfigLoadResult(config=cls.model_validate(valid_params), messages=tuple(messages))
+        return ConfigLoadResult(
+            config=cls.model_validate(
+                valid_params,
+                context={"base_dir": config_path.parent},
+            ),
+            messages=tuple(messages),
+        )

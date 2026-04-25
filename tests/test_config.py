@@ -119,3 +119,19 @@ def test_config_normalizes_relative_tokenizer_model_path(
     config = Config(tokenizer_model_path="models/tokenizer.json")
 
     assert config.tokenizer_model_path == (tmp_path / "models" / "tokenizer.json")
+
+
+def test_load_with_diagnostics_normalizes_relative_tokenizer_model_path(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "tokenizer_model_path: models/tokenizer.json\n",
+        encoding="utf-8",
+    )
+
+    result = Config.load_with_diagnostics(config_path)
+
+    assert result.config.tokenizer_model_path == (
+        tmp_path / "models" / "tokenizer.json"
+    )
