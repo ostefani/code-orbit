@@ -277,12 +277,12 @@ def _configure_event_logger(
     ]
     if existing_handlers:
         existing_paths = {
-            Path(Path(handler.baseFilename).resolve())
+            Path(handler.baseFilename).resolve()
             for handler in existing_handlers
             if handler.baseFilename
         }
         desired_path = (resolved_log_dir / "trace.jsonl").resolve()
-        if existing_paths != {desired_path}:
+        if desired_path not in existing_paths:
             raise ValueError(
                 "Event logger is already configured for a different log directory."
             )
