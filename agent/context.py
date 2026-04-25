@@ -21,7 +21,7 @@ from .embeddings import (
     default_embedding_cache_path,
 )
 from .events import ContextWarningPayload, EventBus
-from .llm import SYSTEM_PROMPT
+from .llm import ARCHITECT_SYSTEM_PROMPT
 from .token_counter import count_tokens
 from .utils import _is_ignored, _is_within_root
 
@@ -241,7 +241,9 @@ def _compute_context_budget(
     - small safety margin
     """
     scaffold = (
-        f"{SYSTEM_PROMPT}\n" f"<codebase>\n</codebase>\n" f"<task>\n{prompt}\n</task>"
+        f"{ARCHITECT_SYSTEM_PROMPT}\n"
+        f"<codebase>\n</codebase>\n"
+        f"<task>\n{prompt}\n</task>"
     )
     scaffold_result = count_tokens(scaffold, config)
     scaffold_tokens = scaffold_result.count

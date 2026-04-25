@@ -96,10 +96,6 @@ RULES:
    changes are needed, return an empty changes list.
 """
 
-# Backward compatibility for the context builder and any older callers.
-SYSTEM_PROMPT = ARCHITECT_SYSTEM_PROMPT
-
-
 class PlanTaskSchema(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
