@@ -6,6 +6,7 @@ import pytest
 from agent.config import Config
 from agent.events import EventBus
 from agent.context import build_context_async
+from agent.token_counter import TokenCountResult
 from agent.utils import _is_ignored
 
 
@@ -127,6 +128,61 @@ def test_context_token_limit(temp_codebase: Path) -> None:
     assert "large.txt" in result.skipped_paths
     assert "<file_tree>" in result.context
     assert "large.txt" in result.context
+    assert "word word word" not in result.context
+
+
+def test_context_scores_utf8_files_by_character_estimate(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    (tmp_path / "ascii.py").write_text("a" * 9003, encoding="utf-8")
+    (tmp_path / "unicode.py").write_text("界" * 6001, encoding="utf-8")
+
+    def fake_count_tokens(text: str, config: Config) -> TokenCountResult:
+        if "<file path=" in text:
+            return TokenCountResult(count=max(1, len(text) // 3), tokenizer_name="fake")
+        return TokenCountResult(count=1, tokenizer_name="fake")
+
+    monkeypatch.setattr("agent.context.count_tokens", fake_count_tokens)
+
+    result = asyncio.run(
+        build_context_async(
+            str(tmp_path),
+            "Refactor source files",
+            Config(max_context_tokens=4300, max_response_tokens=100),
+            embedding_client=FakeSemanticEmbeddingClient(),
+        )
+    )
+
+    assert [entry.path for entry in result.entries] == ["unicode.py"]
+    assert "ascii.py" in result.skipped_paths
+    assert "unicode.py" not in result.skipped_paths
+
+
+def test_context_reads_exact_scored_file_once(tmp_path: Path, monkeypatch) -> None:
+    file_path = tmp_path / "app.py"
+    file_path.write_text("print('hello')\n", encoding="utf-8")
+    read_counts: dict[Path, int] = {}
+    original_read_text = Path.read_text
+
+    def counting_read_text(self: Path, *args, **kwargs):
+        if self == file_path:
+            read_counts[self] = read_counts.get(self, 0) + 1
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", counting_read_text)
+
+    result = asyncio.run(
+        build_context_async(
+            str(tmp_path),
+            "Update app.py",
+            Config(),
+            embedding_client=FakeSemanticEmbeddingClient(),
+        )
+    )
+
+    assert [entry.path for entry in result.entries] == ["app.py"]
+    assert read_counts[file_path] == 1
 
 
 def test_build_context_reports_budget_breakdown_and_zero_budget_warning(

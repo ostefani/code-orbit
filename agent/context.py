@@ -1,4 +1,5 @@
 import asyncio
+import heapq
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,6 +41,16 @@ class FileEntry:
 class FileCandidate:
     path: str
     size_bytes: int
+
+
+@dataclass(frozen=True)
+class ScoredFileCandidate:
+    candidate: FileCandidate
+    lexical_score: float
+    semantic_score: float
+    blended_score: float
+    exact: bool
+    content: str | None = None
 
 
 @dataclass(frozen=True)
@@ -209,6 +220,13 @@ def _render_file_block(path: str, content: str) -> str:
     return f'<file path="{path}">\n{content}\n</file>\n'
 
 
+def _optimistic_utf8_token_estimate(size_bytes: int) -> int:
+    # UTF-8 can use up to four bytes per character, and the estimate backend
+    # approximates tokens as chars // 3. This is an optimistic lower bound,
+    # used only to decide which candidate to exact-score next.
+    return max(1, size_bytes // 12)
+
+
 def _compute_context_budget(
     prompt: str, config: Config
 ) -> tuple[ContextBudgetBreakdown, tuple[str, ...]]:
@@ -330,25 +348,37 @@ async def build_context_async(
             if close is not None:
                 await close()
 
-    scored_candidates: list[tuple[float, FileCandidate, float, float]] = []
+    candidate_heap: list[tuple[float, int, str, int, ScoredFileCandidate]] = []
+    heap_counter = 0
     for candidate in candidates:
         semantic_score = semantic_scores.get(candidate.path, 0.0)
         lexical_score = _score_path(
             candidate.path,
-            max(1, candidate.size_bytes // 3),
+            _optimistic_utf8_token_estimate(candidate.size_bytes),
             prompt,
             semantic_score=0.0,
         )
         blended_score = (
             lexical_score + max(0.0, min(1.0, semantic_score)) * _SEMANTIC_SCORE_WEIGHT
         )
-        scored_candidates.append(
-            (blended_score, candidate, lexical_score, semantic_score)
+        scored_candidate = ScoredFileCandidate(
+            candidate=candidate,
+            lexical_score=lexical_score,
+            semantic_score=semantic_score,
+            blended_score=blended_score,
+            exact=False,
         )
-
-    scored_candidates.sort(
-        key=lambda item: (-item[0], item[1].size_bytes, item[1].path)
-    )
+        heapq.heappush(
+            candidate_heap,
+            (
+                -scored_candidate.blended_score,
+                scored_candidate.candidate.size_bytes,
+                scored_candidate.candidate.path,
+                heap_counter,
+                scored_candidate,
+            ),
+        )
+        heap_counter += 1
 
     budget_breakdown, initial_warnings = _compute_context_budget(prompt, config)
     token_budget = budget_breakdown.file_budget_tokens
@@ -357,14 +387,66 @@ async def build_context_async(
     skipped: list[str] = []
     token_warnings: list[str] = list(initial_warnings)
     included_paths: set[str] = set()
+    score_lookup: dict[str, tuple[float, float, float]] = {}
 
-    for _, candidate, _lexical_score, _semantic_score in scored_candidates:
-        path = root_path / candidate.path
-        try:
-            content = path.read_text(encoding="utf-8", errors="ignore")
-        except (OSError, PermissionError):
+    while candidate_heap:
+        (
+            _sort_score,
+            _sort_size,
+            _sort_path,
+            _sort_counter,
+            scored_candidate,
+        ) = heapq.heappop(candidate_heap)
+        candidate = scored_candidate.candidate
+
+        if not scored_candidate.exact:
+            path = root_path / candidate.path
+            try:
+                content = path.read_text(encoding="utf-8", errors="ignore")
+            except (OSError, PermissionError):
+                continue
+
+            semantic_score = scored_candidate.semantic_score
+            lexical_score = _score_path(
+                candidate.path,
+                max(1, len(content) // 3),
+                prompt,
+                semantic_score=0.0,
+            )
+            blended_score = (
+                lexical_score
+                + max(0.0, min(1.0, semantic_score)) * _SEMANTIC_SCORE_WEIGHT
+            )
+            exact_candidate = ScoredFileCandidate(
+                candidate=candidate,
+                lexical_score=lexical_score,
+                semantic_score=semantic_score,
+                blended_score=blended_score,
+                exact=True,
+                content=content,
+            )
+            heapq.heappush(
+                candidate_heap,
+                (
+                    -exact_candidate.blended_score,
+                    exact_candidate.candidate.size_bytes,
+                    exact_candidate.candidate.path,
+                    heap_counter,
+                    exact_candidate,
+                ),
+            )
+            heap_counter += 1
             continue
 
+        content = scored_candidate.content
+        if content is None:
+            continue
+
+        score_lookup[candidate.path] = (
+            scored_candidate.lexical_score,
+            scored_candidate.blended_score,
+            scored_candidate.semantic_score,
+        )
         rendered = _render_file_block(candidate.path, content)
         token_result = count_tokens(rendered, config)
         tokens = token_result.count
@@ -387,10 +469,6 @@ async def build_context_async(
 
     semantic_matches: tuple[SemanticMatch, ...] = ()
     if semantic_scores:
-        score_lookup = {
-            candidate.path: (lexical_score, blended_score, semantic_score)
-            for blended_score, candidate, lexical_score, semantic_score in scored_candidates
-        }
         ordered_matches = sorted(
             [
                 (
