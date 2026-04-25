@@ -44,8 +44,13 @@ async def run_workflow(
 ) -> None:
     console_obj = console or Console()
     event_bus = EventBus()
-    event_bus.subscribe(LoggingEventSubscriber(build_event_logger()))
     event_bus.subscribe(CliEventRenderer(console_obj))
+    target_path = str(Path(target_dir).resolve())
+    event_bus.subscribe(
+        LoggingEventSubscriber(
+            build_event_logger(log_dir=Path(target_path) / ".code-orbit")
+        )
+    )
 
     runtime: WorkflowRuntime | None = None
 
@@ -81,7 +86,6 @@ async def run_workflow(
         allow_delete=config.allow_delete or allow_delete,
     )
 
-    target_path = str(Path(target_dir).resolve())
     event_bus.publish(AgentEvent(
         name="run.started",
         state="starting",
