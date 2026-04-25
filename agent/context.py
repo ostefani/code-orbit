@@ -1,4 +1,5 @@
 import asyncio
+import heapq
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,7 +21,7 @@ from .embeddings import (
     default_embedding_cache_path,
 )
 from .events import ContextWarningPayload, EventBus
-from .llm import SYSTEM_PROMPT
+from .llm import ARCHITECT_SYSTEM_PROMPT
 from .token_counter import count_tokens
 from .utils import _is_ignored, _is_within_root
 
@@ -40,6 +41,16 @@ class FileEntry:
 class FileCandidate:
     path: str
     size_bytes: int
+
+
+@dataclass(frozen=True)
+class ScoredFileCandidate:
+    candidate: FileCandidate
+    lexical_score: float
+    semantic_score: float
+    blended_score: float
+    exact: bool
+    content: str | None = None
 
 
 @dataclass(frozen=True)
@@ -69,6 +80,54 @@ class ContextBuildResult:
     token_warnings: tuple[str, ...]
     semantic_matches: tuple[SemanticMatch, ...] = ()
     budget_breakdown: ContextBudgetBreakdown | None = None
+
+
+def _walk_candidates_and_tree(
+    root: Path,
+    config: Config,
+    *,
+    collect_candidates: bool,
+) -> tuple[list[FileCandidate], str]:
+    candidates: list[FileCandidate] = []
+    tree_lines = [f"{root.name}/"]
+
+    for dirpath, dirnames, filenames in root.walk():
+        current = dirpath
+
+        dirnames[:] = [
+            d
+            for d in sorted(dirnames)
+            if not _is_ignored(current / d, root, config.ignore_patterns)
+            and not (current / d).is_symlink()
+            and _is_within_root(current / d, root)
+        ]
+
+        depth = len(current.relative_to(root).parts)
+        indent = "  " * depth
+        for dirname in dirnames:
+            tree_lines.append(f"{indent}{dirname}/")
+
+        for fname in sorted(filenames):
+            fpath = current / fname
+            if (
+                _is_ignored(fpath, root, config.ignore_patterns)
+                or fpath.is_symlink()
+                or not _is_within_root(fpath, root)
+            ):
+                continue
+
+            tree_lines.append(f"{indent}{fname}")
+            if not collect_candidates:
+                continue
+
+            candidate = _safe_candidate(root, fpath)
+            if candidate is None:
+                continue
+            if candidate.size_bytes > config.max_file_size:
+                continue
+            candidates.append(candidate)
+
+    return candidates, "\n".join(tree_lines)
 
 
 def _safe_candidate(root: Path, path: Path) -> FileCandidate | None:
@@ -161,6 +220,13 @@ def _render_file_block(path: str, content: str) -> str:
     return f'<file path="{path}">\n{content}\n</file>\n'
 
 
+def _optimistic_utf8_token_estimate(size_bytes: int) -> int:
+    # UTF-8 can use up to four bytes per character, and the estimate backend
+    # approximates tokens as chars // 3. This is an optimistic lower bound,
+    # used only to decide which candidate to exact-score next.
+    return max(1, size_bytes // 12)
+
+
 def _compute_context_budget(
     prompt: str, config: Config
 ) -> tuple[ContextBudgetBreakdown, tuple[str, ...]]:
@@ -175,7 +241,9 @@ def _compute_context_budget(
     - small safety margin
     """
     scaffold = (
-        f"{SYSTEM_PROMPT}\n" f"<codebase>\n</codebase>\n" f"<task>\n{prompt}\n</task>"
+        f"{ARCHITECT_SYSTEM_PROMPT}\n"
+        f"<codebase>\n</codebase>\n"
+        f"<task>\n{prompt}\n</task>"
     )
     scaffold_result = count_tokens(scaffold, config)
     scaffold_tokens = scaffold_result.count
@@ -237,29 +305,11 @@ async def build_context_async(
     remaining file-token budget.
     """
     root_path = Path(root).resolve()
-    candidates: list[FileCandidate] = []
-
-    for dirpath, dirnames, filenames in root_path.walk():
-        current = dirpath
-
-        dirnames[:] = [
-            d
-            for d in dirnames
-            if not _is_ignored(current / d, root_path, config.ignore_patterns)
-            and not (current / d).is_symlink()
-            and _is_within_root(current / d, root_path)
-        ]
-
-        for fname in sorted(filenames):
-            fpath = current / fname
-            if _is_ignored(fpath, root_path, config.ignore_patterns):
-                continue
-            candidate = _safe_candidate(root_path, fpath)
-            if candidate is None:
-                continue
-            if candidate.size_bytes > config.max_file_size:
-                continue
-            candidates.append(candidate)
+    candidates, file_tree = _walk_candidates_and_tree(
+        root_path,
+        config,
+        collect_candidates=True,
+    )
 
     semantic_scores: dict[str, float] = {}
     owns_semantic_client = embedding_client is None
@@ -300,25 +350,37 @@ async def build_context_async(
             if close is not None:
                 await close()
 
-    scored_candidates: list[tuple[float, FileCandidate, float, float]] = []
+    candidate_heap: list[tuple[float, int, str, int, ScoredFileCandidate]] = []
+    heap_counter = 0
     for candidate in candidates:
         semantic_score = semantic_scores.get(candidate.path, 0.0)
         lexical_score = _score_path(
             candidate.path,
-            max(1, candidate.size_bytes // 3),
+            _optimistic_utf8_token_estimate(candidate.size_bytes),
             prompt,
             semantic_score=0.0,
         )
         blended_score = (
             lexical_score + max(0.0, min(1.0, semantic_score)) * _SEMANTIC_SCORE_WEIGHT
         )
-        scored_candidates.append(
-            (blended_score, candidate, lexical_score, semantic_score)
+        scored_candidate = ScoredFileCandidate(
+            candidate=candidate,
+            lexical_score=lexical_score,
+            semantic_score=semantic_score,
+            blended_score=blended_score,
+            exact=False,
         )
-
-    scored_candidates.sort(
-        key=lambda item: (-item[0], item[1].size_bytes, item[1].path)
-    )
+        heapq.heappush(
+            candidate_heap,
+            (
+                -scored_candidate.blended_score,
+                scored_candidate.candidate.size_bytes,
+                scored_candidate.candidate.path,
+                heap_counter,
+                scored_candidate,
+            ),
+        )
+        heap_counter += 1
 
     budget_breakdown, initial_warnings = _compute_context_budget(prompt, config)
     token_budget = budget_breakdown.file_budget_tokens
@@ -327,14 +389,66 @@ async def build_context_async(
     skipped: list[str] = []
     token_warnings: list[str] = list(initial_warnings)
     included_paths: set[str] = set()
+    score_lookup: dict[str, tuple[float, float, float]] = {}
 
-    for _, candidate, _lexical_score, _semantic_score in scored_candidates:
-        path = root_path / candidate.path
-        try:
-            content = path.read_text(encoding="utf-8", errors="ignore")
-        except (OSError, PermissionError):
+    while candidate_heap:
+        (
+            _sort_score,
+            _sort_size,
+            _sort_path,
+            _sort_counter,
+            scored_candidate,
+        ) = heapq.heappop(candidate_heap)
+        candidate = scored_candidate.candidate
+
+        if not scored_candidate.exact:
+            path = root_path / candidate.path
+            try:
+                content = path.read_text(encoding="utf-8", errors="ignore")
+            except (OSError, PermissionError):
+                continue
+
+            semantic_score = scored_candidate.semantic_score
+            lexical_score = _score_path(
+                candidate.path,
+                max(1, len(content) // 3),
+                prompt,
+                semantic_score=0.0,
+            )
+            blended_score = (
+                lexical_score
+                + max(0.0, min(1.0, semantic_score)) * _SEMANTIC_SCORE_WEIGHT
+            )
+            exact_candidate = ScoredFileCandidate(
+                candidate=candidate,
+                lexical_score=lexical_score,
+                semantic_score=semantic_score,
+                blended_score=blended_score,
+                exact=True,
+                content=content,
+            )
+            heapq.heappush(
+                candidate_heap,
+                (
+                    -exact_candidate.blended_score,
+                    exact_candidate.candidate.size_bytes,
+                    exact_candidate.candidate.path,
+                    heap_counter,
+                    exact_candidate,
+                ),
+            )
+            heap_counter += 1
             continue
 
+        content = scored_candidate.content
+        if content is None:
+            continue
+
+        score_lookup[candidate.path] = (
+            scored_candidate.lexical_score,
+            scored_candidate.blended_score,
+            scored_candidate.semantic_score,
+        )
         rendered = _render_file_block(candidate.path, content)
         token_result = count_tokens(rendered, config)
         tokens = token_result.count
@@ -357,10 +471,6 @@ async def build_context_async(
 
     semantic_matches: tuple[SemanticMatch, ...] = ()
     if semantic_scores:
-        score_lookup = {
-            candidate.path: (lexical_score, blended_score, semantic_score)
-            for blended_score, candidate, lexical_score, semantic_score in scored_candidates
-        }
         ordered_matches = sorted(
             [
                 (
@@ -385,11 +495,9 @@ async def build_context_async(
         )
 
     parts = ["<codebase>"]
-    parts.append(f"<file_tree>\n{get_file_tree(str(root_path), config)}\n</file_tree>")
+    parts.append(f"<file_tree>\n{file_tree}\n</file_tree>")
     for entry in included:
-        parts.append(f'<file path="{entry.path}">')
-        parts.append(entry.content)
-        parts.append("</file>")
+        parts.append(_render_file_block(entry.path, entry.content).rstrip("\n"))
     parts.append("</codebase>")
 
     context_str = "\n".join(parts)
@@ -409,28 +517,9 @@ async def build_context_async(
 def get_file_tree(root: str, config: Config) -> str:
     """Return a compact file tree string for display."""
     root_path = Path(root).resolve()
-    lines = [f"{root_path.name}/"]
-
-    for dirpath, dirnames, filenames in root_path.walk():
-        current = dirpath
-        dirnames[:] = [
-            d
-            for d in sorted(dirnames)
-            if not _is_ignored(current / d, root_path, config.ignore_patterns)
-            and not (current / d).is_symlink()
-            and _is_within_root(current / d, root_path)
-        ]
-        depth = len(current.relative_to(root_path).parts)
-        indent = "  " * depth
-        for dirname in sorted(dirnames):
-            lines.append(f"{indent}{dirname}/")
-        for fname in sorted(filenames):
-            fpath = current / fname
-            if (
-                not _is_ignored(fpath, root_path, config.ignore_patterns)
-                and not fpath.is_symlink()
-                and _is_within_root(fpath, root_path)
-            ):
-                lines.append(f"{indent}{fname}")
-
-    return "\n".join(lines)
+    _, file_tree = _walk_candidates_and_tree(
+        root_path,
+        config,
+        collect_candidates=False,
+    )
+    return file_tree

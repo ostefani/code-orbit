@@ -8,7 +8,7 @@ import pytest
 
 from agent.config import Config
 from agent.events import AgentEvent, EventBus, RunProposalReadyPayload
-from agent.llm import CodeResponseSchema, PlanSchema, PlanTaskSchema
+from agent.llm import CodeResponseSchema, PlanSchema, PlanTaskSchema, call_coder
 from agent.schemas import CodeChangeSchema
 from rich.console import Console
 import main as main_module
@@ -285,6 +285,27 @@ def test_plan_schema_accepts_multiple_tasks() -> None:
     )
 
     assert plan.tasks[0].files == ["src/app.py"]
+
+
+def test_call_coder_rejects_multi_task_plans() -> None:
+    plan = PlanSchema(
+        summary="Split the feature into multiple tasks",
+        tasks=[
+            PlanTaskSchema(
+                files=["src/app.py"],
+                goal="Update the CLI entry point",
+                reasoning="The entry point needs the first change.",
+            ),
+            PlanTaskSchema(
+                files=["agent/llm.py"],
+                goal="Update the model wrapper",
+                reasoning="The LLM layer needs the second change.",
+            ),
+        ],
+    )
+
+    with pytest.raises(ValueError, match="single-task plans"):
+        asyncio.run(call_coder(plan, "<codebase />", Config()))
 
 
 def test_open_plan_in_editor_parses_modified_plan(monkeypatch, tmp_path) -> None:

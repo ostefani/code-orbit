@@ -96,10 +96,6 @@ RULES:
    changes are needed, return an empty changes list.
 """
 
-# Backward compatibility for the context builder and any older callers.
-SYSTEM_PROMPT = ARCHITECT_SYSTEM_PROMPT
-
-
 class PlanTaskSchema(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -255,9 +251,14 @@ async def call_coder(
     chat_adapter: ChatAdapter | None = None,
     on_chunk: Callable[[str], None] | None = None,
 ) -> CodeResponseSchema:
-    """Backward-compatible wrapper that executes the first approved task."""
+    """Backward-compatible wrapper for callers that submit exactly one task."""
     if not plan.tasks:
         raise ValueError("Approved plan must contain at least one task.")
+    if len(plan.tasks) > 1:
+        raise ValueError(
+            "call_coder only supports single-task plans. "
+            "Use call_coder_for_task for each approved task."
+        )
     return await call_coder_for_task(
         plan=plan,
         task=plan.tasks[0],

@@ -2,6 +2,8 @@ import json
 import hashlib
 from pathlib import Path
 
+import pytest
+
 from agent.config import Config
 from agent.embeddings import (
     EmbeddingCache,
@@ -37,6 +39,19 @@ class FakeEmbeddingClient:
 
     async def probe(self) -> None:
         return None
+
+
+class PartiallyFailingEmbeddingClient(FakeEmbeddingClient):
+    def __init__(self, fail_on: str) -> None:
+        super().__init__()
+        self.fail_on = fail_on
+
+    async def embed(self, texts):
+        batch = list(texts)
+        if any(self.fail_on in text for text in batch):
+            self.requests.append(batch)
+            raise RuntimeError("embedding batch failed")
+        return await super().embed(batch)
 
 
 def _write_codebase(root: Path) -> None:
@@ -315,6 +330,64 @@ def test_build_embedding_sync_reads_each_file_once(tmp_path: Path, monkeypatch) 
     assert calls["count"] == expected_files
 
 
+def test_build_embedding_sync_keeps_successful_batches_when_one_batch_fails(
+    tmp_path: Path,
+) -> None:
+    _write_codebase(tmp_path)
+    config = Config(ignore_patterns=[".git", "node_modules"])
+    client = PartiallyFailingEmbeddingClient("assert True")
+
+    result = build_embedding_sync(
+        tmp_path,
+        config,
+        client=client,
+        cache_path=default_embedding_cache_path(tmp_path),
+        batch_size=1,
+    )
+
+    assert result.updated_files == ("src/auth/middleware.py",)
+    assert result.failed_files == ("src/tests.py",)
+    assert result.chunk_count == 1
+    assert set(EmbeddingCache.load(result.cache_path).files) == {
+        "src/auth/middleware.py",
+    }
+
+
+def test_build_embedding_sync_does_not_overwrite_cache_for_failed_batch(
+    tmp_path: Path,
+) -> None:
+    _write_codebase(tmp_path)
+    config = Config(ignore_patterns=[".git", "node_modules"])
+    cache_path = default_embedding_cache_path(tmp_path)
+
+    initial = build_embedding_sync(
+        tmp_path,
+        config,
+        client=FakeEmbeddingClient(),
+        cache_path=cache_path,
+        batch_size=1,
+    )
+    cached_before = EmbeddingCache.load(initial.cache_path)
+    old_record = cached_before.files["src/tests.py"]
+
+    (tmp_path / "src" / "tests.py").write_text(
+        "def test_rate_limit():\n    assert False\n",
+        encoding="utf-8",
+    )
+    result = build_embedding_sync(
+        tmp_path,
+        config,
+        client=PartiallyFailingEmbeddingClient("assert False"),
+        cache_path=cache_path,
+        batch_size=1,
+    )
+
+    cached_after = EmbeddingCache.load(result.cache_path)
+    assert result.updated_files == ()
+    assert result.failed_files == ("src/tests.py",)
+    assert cached_after.files["src/tests.py"] == old_record
+
+
 def test_vector_store_ranks_closest_chunk() -> None:
     store = VectorStore(
         records=[
@@ -351,6 +424,115 @@ def test_vector_store_ranks_closest_chunk() -> None:
 
     assert results[0].path == "auth/middleware.py"
     assert results[0].score > results[1].score
+
+
+def test_vector_store_search_returns_best_chunk_metadata() -> None:
+    store = VectorStore(
+        records=[
+            FileEmbeddingRecord(
+                path="auth/middleware.py",
+                sha256="a",
+                chunks=(
+                    ChunkEmbedding(
+                        index=0,
+                        vector=(0.0, 1.0),
+                        start_line=1,
+                        end_line=2,
+                        content_hash="x",
+                    ),
+                    ChunkEmbedding(
+                        index=1,
+                        vector=(1.0, 0.0),
+                        start_line=3,
+                        end_line=4,
+                        content_hash="y",
+                    ),
+                ),
+            ),
+            FileEmbeddingRecord(
+                path="tests/test_rate.py",
+                sha256="b",
+                chunks=(
+                    ChunkEmbedding(
+                        index=0,
+                        vector=(0.0, 1.0),
+                        start_line=1,
+                        end_line=2,
+                        content_hash="z",
+                    ),
+                ),
+            ),
+        ]
+    )
+
+    results = store.search((1.0, 0.0))
+    scores = store.semantic_scores((1.0, 0.0))
+
+    assert results[0].path == "auth/middleware.py"
+    assert results[0].score == scores["auth/middleware.py"]
+    assert results[0].chunk_index == 1
+    assert results[0].start_line == 3
+
+
+def test_vector_store_search_ties_use_lowest_chunk_index() -> None:
+    store = VectorStore(
+        records=[
+            FileEmbeddingRecord(
+                path="auth/middleware.py",
+                sha256="a",
+                chunks=(
+                    ChunkEmbedding(
+                        index=2,
+                        vector=(1.0, 0.0),
+                        start_line=5,
+                        end_line=6,
+                        content_hash="later",
+                    ),
+                    ChunkEmbedding(
+                        index=1,
+                        vector=(1.0, 0.0),
+                        start_line=3,
+                        end_line=4,
+                        content_hash="earlier",
+                    ),
+                ),
+            ),
+        ]
+    )
+
+    results = store.search((1.0, 0.0))
+
+    assert results[0].chunk_index == 1
+    assert results[0].start_line == 3
+
+
+def test_vector_store_rejects_wrong_query_dimension() -> None:
+    store = VectorStore(
+        records=[
+            FileEmbeddingRecord(
+                path="auth/middleware.py",
+                sha256="a",
+                chunks=(
+                    ChunkEmbedding(
+                        index=0,
+                        vector=(1.0, 0.0),
+                        start_line=1,
+                        end_line=2,
+                        content_hash="x",
+                    ),
+                ),
+            ),
+        ]
+    )
+
+    with pytest.raises(ValueError, match="dimension"):
+        store.search((1.0, 0.0, 0.0))
+
+    with pytest.raises(ValueError, match="dimension"):
+        store.semantic_scores((1.0, 0.0, 0.0))
+
+    with pytest.raises(ValueError, match="dimension"):
+        store.score_path("auth/middleware.py", (1.0, 0.0, 0.0))
 
 
 def test_vector_store_semantic_scores_use_best_chunk() -> None:
@@ -433,10 +615,111 @@ def test_vector_store_builds_numpy_index_lazily() -> None:
 
     store.add(
         FileEmbeddingRecord(
+            path="auth/middleware.py",
+            sha256="b",
+            chunks=(
+                ChunkEmbedding(
+                    index=0,
+                    vector=(0.0, 1.0),
+                    start_line=1,
+                    end_line=2,
+                    content_hash="y",
+                ),
+            ),
+        )
+    )
+    scores = store.semantic_scores((0.0, 1.0))
+
+    assert build_calls == 2
+    assert scores["auth/middleware.py"] == 1.0
+
+
+def test_vector_store_add_batches_pending_records_for_warm_numpy_index() -> None:
+    store = VectorStore(
+        records=[
+            FileEmbeddingRecord(
+                path="auth/middleware.py",
+                sha256="a",
+                chunks=(
+                    ChunkEmbedding(
+                        index=0,
+                        vector=(1.0, 0.0),
+                        start_line=1,
+                        end_line=2,
+                        content_hash="x",
+                    ),
+                ),
+            ),
+        ]
+    )
+
+    assert store.semantic_scores((1.0, 0.0))["auth/middleware.py"] == 1.0
+
+    store.add(
+        FileEmbeddingRecord(
             path="tests/test_rate.py",
             sha256="b",
+            chunks=(
+                ChunkEmbedding(
+                    index=0,
+                    vector=(0.0, 1.0),
+                    start_line=1,
+                    end_line=2,
+                    content_hash="y",
+                ),
+            ),
+        )
+    )
+    store.add(
+        FileEmbeddingRecord(
+            path="docs/empty.md",
+            sha256="c",
             chunks=(),
         )
     )
+
+    scores = store.semantic_scores((0.0, 1.0))
+
+    assert scores["tests/test_rate.py"] == 1.0
+    assert scores["auth/middleware.py"] == 0.0
+    assert scores["docs/empty.md"] == 0.0
+
+
+def test_vector_store_add_rejects_mismatched_dimensions_for_warm_index() -> None:
+    store = VectorStore(
+        records=[
+            FileEmbeddingRecord(
+                path="auth/middleware.py",
+                sha256="a",
+                chunks=(
+                    ChunkEmbedding(
+                        index=0,
+                        vector=(1.0, 0.0),
+                        start_line=1,
+                        end_line=2,
+                        content_hash="x",
+                    ),
+                ),
+            ),
+        ]
+    )
     store.semantic_scores((1.0, 0.0))
-    assert build_calls == 2
+
+    store.add(
+        FileEmbeddingRecord(
+            path="tests/test_rate.py",
+            sha256="b",
+            chunks=(
+                ChunkEmbedding(
+                    index=0,
+                    vector=(1.0, 0.0, 0.0),
+                    start_line=1,
+                    end_line=2,
+                    content_hash="y",
+                ),
+            ),
+        )
+    )
+
+    with pytest.raises(ValueError, match="dimension"):
+        store.semantic_scores((1.0, 0.0))
