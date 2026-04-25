@@ -495,9 +495,7 @@ async def build_context_async(
     parts = ["<codebase>"]
     parts.append(f"<file_tree>\n{file_tree}\n</file_tree>")
     for entry in included:
-        parts.append(f'<file path="{entry.path}">')
-        parts.append(entry.content)
-        parts.append("</file>")
+        parts.append(_render_file_block(entry.path, entry.content).rstrip("\n"))
     parts.append("</codebase>")
 
     context_str = "\n".join(parts)
