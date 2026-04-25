@@ -19,7 +19,10 @@ from .config import Config
 from .schemas import CodeChangeSchema
 
 CodeChangeInput = CodeChangeSchema | dict[str, Any]
-DEFAULT_MAX_CONTENT_BYTES = int(Config.model_fields["max_content_bytes"].default)
+_max_content_bytes_default = Config.model_fields["max_content_bytes"].default
+if not isinstance(_max_content_bytes_default, int):
+    raise RuntimeError("Config.max_content_bytes default must be an int.")
+DEFAULT_MAX_CONTENT_BYTES = _max_content_bytes_default
 
 
 def _publish_preview(event_bus: EventBus, payload: PreviewChangePayload) -> None:
