@@ -1,3 +1,5 @@
+import subprocess
+
 import pytest
 from pathlib import Path
 from agent.patcher import apply_changes, git_commit, preview_changes
@@ -54,6 +56,30 @@ def test_preview_unchanged_update_accepts_code_change_schema(temp_project):
     assert events[0].payload.unchanged is True
 
 
+def test_preview_update_diff_text_is_plain(temp_project):
+    changes = [
+        CodeChangeSchema(
+            path="existing.py",
+            action="update",
+            content="print('new')",
+        )
+    ]
+    bus = EventBus()
+    events = []
+    bus.subscribe(events.append)
+
+    preview_changes(str(temp_project), changes, event_bus=bus)
+
+    assert len(events) == 1
+    payload = events[0].payload
+    assert isinstance(payload, PreviewChangePayload)
+    assert payload.diff_text is not None
+    assert "[green]" not in payload.diff_text
+    assert "[red]" not in payload.diff_text
+    assert "--- a/existing.py" in payload.diff_text
+    assert "+++ b/existing.py" in payload.diff_text
+
+
 def test_apply_update(temp_project):
     changes = [
         {"path": "existing.py", "action": "update", "content": "print('updated')"}
@@ -70,6 +96,13 @@ def test_apply_delete(temp_project):
 
     assert "existing.py" in affected
     assert not (temp_project / "existing.py").exists()
+
+
+def test_apply_delete_missing_file_does_not_append_affected(temp_project):
+    changes = [{"path": "missing.py", "action": "delete"}]
+    affected = apply_changes(str(temp_project), changes)
+
+    assert affected == []
 
 
 def test_apply_mkdir(temp_project):
@@ -139,7 +172,7 @@ def test_git_commit_stages_relative_paths(temp_project, monkeypatch):
 
     def fake_run(cmd, cwd=None, check=None, capture_output=None):
         calls.append((cmd, cwd, check, capture_output))
-        return __import__("subprocess").CompletedProcess(cmd, 0, stdout=b"", stderr=b"")
+        return subprocess.CompletedProcess(cmd, 0, stdout=b"", stderr=b"")
 
     monkeypatch.setattr("agent.patcher.subprocess.run", fake_run)
 
@@ -154,12 +187,30 @@ def test_git_commit_stages_relative_paths(temp_project, monkeypatch):
     assert calls[1][0] == ["git", "commit", "-m", "[llm-agent] Add feature"]
 
 
-def test_git_commit_rejects_path_traversal(temp_project, monkeypatch):
-    monkeypatch.setattr("agent.patcher.subprocess.run", lambda *args, **kwargs: None)
-
-    with pytest.raises(ValueError, match="outside repository root"):
+def test_git_commit_rejects_path_traversal(temp_project):
+    with pytest.raises(PermissionError, match="Path traversal detected"):
         git_commit(
             str(temp_project),
             "Add feature",
             ["../outside.py"],
+        )
+
+
+def test_git_commit_propagates_git_add_failure(temp_project, monkeypatch):
+    def fake_run(cmd, cwd=None, check=None, capture_output=None):
+        if cmd[:2] == ["git", "add"]:
+            raise subprocess.CalledProcessError(
+                returncode=1,
+                cmd=cmd,
+                stderr=b"boom",
+            )
+        return subprocess.CompletedProcess(cmd, 0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr("agent.patcher.subprocess.run", fake_run)
+
+    with pytest.raises(subprocess.CalledProcessError):
+        git_commit(
+            str(temp_project),
+            "Add feature",
+            ["existing.py"],
         )

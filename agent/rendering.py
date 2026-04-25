@@ -233,8 +233,21 @@ class CliEventRenderer:
 
         rprint(
             Panel(
-                event.payload.diff_text or "",
+                self._render_diff_text(event.payload.diff_text or ""),
                 title="[yellow]Diff Preview[/yellow]",
                 border_style="yellow",
             )
         )
+
+    def _render_diff_text(self, diff_text: str) -> str:
+        lines: list[str] = []
+        for line in diff_text.splitlines():
+            if line.startswith("+") and not line.startswith("+++"):
+                lines.append(f"[green]{line}[/green]")
+            elif line.startswith("-") and not line.startswith("---"):
+                lines.append(f"[red]{line}[/red]")
+            elif line.startswith("@@"):
+                lines.append(f"[cyan]{line}[/cyan]")
+            else:
+                lines.append(line)
+        return "\n".join(lines)
