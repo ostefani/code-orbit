@@ -10,29 +10,34 @@ from agent.events import (
     StateChangedPayload,
 )
 from agent.llm import CodeResponseSchema, call_coder_for_task
+from agent.schemas import CodeChangeSchema
+from agent.utils import validate_repo_relative_path
 
 from ._state import (
-    FileChange,
     WorkflowRuntime,
     WorkflowState,
     require_approved_plan,
     reset_execution_state,
 )
 
-ALLOWED_ACTIONS = {"create", "update", "delete"}
+ALLOWED_ACTIONS = {"create", "update", "delete", "mkdir", "copy", "move"}
 MAX_REPLAN_ATTEMPTS = 3
 
 
-def render_applied_changes_context(changes: list[FileChange]) -> str:
+def render_applied_changes_context(changes: list[CodeChangeSchema]) -> str:
     if not changes:
         return ""
 
     blocks = ["<applied_changes>"]
     for change in changes:
-        path = change["path"]
-        action = change["action"]
-        content = change.get("content")
-        blocks.append(f'<change path="{path}" action="{action}">')
+        path = change.path
+        action = change.action
+        content = change.content
+        src = change.src
+        attrs = f'path="{path}" action="{action}"'
+        if src:
+            attrs += f' src="{src}"'
+        blocks.append(f"<change {attrs}>")
         if content is not None:
             blocks.append(content)
         blocks.append("</change>")
@@ -40,7 +45,7 @@ def render_applied_changes_context(changes: list[FileChange]) -> str:
     return "\n".join(blocks)
 
 
-def build_working_context(base_context: str, changes: list[FileChange]) -> str:
+def build_working_context(base_context: str, changes: list[CodeChangeSchema]) -> str:
     applied_changes_context = render_applied_changes_context(changes)
     if not applied_changes_context:
         return base_context
@@ -49,7 +54,7 @@ def build_working_context(base_context: str, changes: list[FileChange]) -> str:
 
 def format_execution_feedback(
     error: str,
-    partial_changes: list[FileChange],
+    partial_changes: list[CodeChangeSchema],
 ) -> str:
     parts = [f"Execution failed with error: {error}"]
     if partial_changes:
@@ -61,8 +66,8 @@ def format_execution_feedback(
 def validate_llm_result(
     result: CodeResponseSchema,
     config: Config,
-) -> tuple[str, list[FileChange]]:
-    validated_changes: list[FileChange] = []
+) -> tuple[str, list[CodeChangeSchema]]:
+    validated_changes: list[CodeChangeSchema] = []
     seen_paths: set[str] = set()
 
     for index, change in enumerate(result.changes, 1):
@@ -75,7 +80,7 @@ def validate_llm_result(
         if not path.strip():
             raise ValueError(f"Change #{index} is missing a valid 'path' string.")
 
-        normalized_path = path.strip()
+        normalized_path = validate_repo_relative_path(path, f"Change #{index} path")
         if normalized_path in seen_paths:
             raise ValueError(f"Duplicate change path detected: {normalized_path!r}")
         seen_paths.add(normalized_path)
@@ -92,7 +97,33 @@ def validate_llm_result(
                     "Model proposed a delete action, but deletes are disabled. "
                     "Re-run with --allow-delete or set allow_delete: true in config."
                 )
-            validated_changes.append(FileChange(path=normalized_path, action=action))
+            validated_changes.append(
+                CodeChangeSchema(path=normalized_path, action=action)
+            )
+            continue
+
+        if action == "mkdir":
+            validated_changes.append(
+                CodeChangeSchema(path=normalized_path, action=action)
+            )
+            continue
+
+        if action in {"copy", "move"}:
+            src = change.src
+            if not src or not src.strip():
+                raise ValueError(
+                    f"Change #{index} action={action!r} requires a non-empty 'src'."
+                )
+            normalized_src = validate_repo_relative_path(
+                src, f"Change #{index} src"
+            )
+            validated_changes.append(
+                CodeChangeSchema(
+                    path=normalized_path,
+                    action=action,
+                    src=normalized_src,
+                )
+            )
             continue
 
         # Defense-in-depth: the schema validator should already enforce this for
@@ -101,7 +132,11 @@ def validate_llm_result(
         if content is None:
             raise ValueError(f"Change #{index} action={action!r} requires content.")
         validated_changes.append(
-            FileChange(path=normalized_path, action=action, content=content)
+            CodeChangeSchema(
+                path=normalized_path,
+                action=action,
+                content=content,
+            )
         )
 
     return result.summary, validated_changes

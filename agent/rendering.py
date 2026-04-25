@@ -112,6 +112,12 @@ class CliEventRenderer:
                     rprint(f"  [red]🗑️  Deleted:[/red] {path}")
                 else:
                     rprint(f"  [yellow]⚠️  Delete skipped (not found):[/yellow] {path}")
+            elif action == "mkdir":
+                rprint(f"  [cyan]📁 Directory:[/cyan] {path}")
+            elif action == "copy":
+                rprint(f"  [blue]📋 Copied:[/blue] {path}")
+            elif action == "move":
+                rprint(f"  [magenta]✂️  Moved:[/magenta] {path}")
             else:
                 verb = "Created" if action == "create" else "Updated"
                 rprint(f"  [green]✅ {verb}:[/green] {path}")
@@ -153,6 +159,9 @@ class CliEventRenderer:
             "update": "[bold yellow]✏️  UPDATE[/bold yellow]",
             "create": "[bold green]✨ CREATE[/bold green]",
             "delete": "[bold red]🗑️  DELETE[/bold red]",
+            "mkdir": "[bold cyan]📁 MKDIR[/bold cyan]",
+            "copy": "[bold blue]📋 COPY[/bold blue]",
+            "move": "[bold magenta]✂️  MOVE[/bold magenta]",
         }.get(action, f"[bold]{action.upper()}[/bold]")
         width = max(0, self.console.width - len(path) - 20)
         rprint(
@@ -163,6 +172,23 @@ class CliEventRenderer:
         if action == "delete":
             if event.payload.exists:
                 rprint("  [dim]File will be deleted.[/dim]")
+            return
+
+        if action == "mkdir":
+            if event.payload.exists:
+                rprint("  [dim]Directory already exists (no-op).[/dim]")
+            else:
+                rprint("  [cyan]📁 Directory will be created.[/cyan]")
+            return
+
+        if action in ("copy", "move"):
+            src = event.payload.src or "?"
+            verb = "Copied from" if action == "copy" else "Moved from"
+            rprint(f"  [blue]{verb}:[/blue] {src} → {path}")
+            if event.payload.exists:
+                rprint(
+                    "  [yellow]  ⚠️  Destination already exists and will be overwritten.[/yellow]"
+                )
             return
 
         extension = Path(path).suffix[1:] or "text"

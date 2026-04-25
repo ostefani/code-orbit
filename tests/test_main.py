@@ -8,7 +8,8 @@ import pytest
 
 from agent.config import Config
 from agent.events import AgentEvent, EventBus, RunProposalReadyPayload
-from agent.llm import CodeChangeSchema, CodeResponseSchema, PlanSchema, PlanTaskSchema
+from agent.llm import CodeResponseSchema, PlanSchema, PlanTaskSchema
+from agent.schemas import CodeChangeSchema
 from rich.console import Console
 import main as main_module
 from main import load_history, save_history
@@ -67,15 +68,21 @@ def test_validate_llm_result_accepts_valid_changes() -> None:
         "changes": [
             CodeChangeSchema(path="src/app.py", action="update", content="print('ok')"),
             CodeChangeSchema(path="src/new.py", action="create", content="print('new')"),
+            CodeChangeSchema(path="src/assets", action="mkdir"),
+            CodeChangeSchema(path="src/copied.py", action="copy", src="src/app.py"),
+            CodeChangeSchema(path="src/moved.py", action="move", src="src/old.py"),
         ],
     }
 
     summary, changes = validate_llm_result(CodeResponseSchema(**result), Config())
 
     assert summary == "Update files"
-    assert changes == [
+    assert [change.model_dump(exclude_none=True) for change in changes] == [
         {"path": "src/app.py", "action": "update", "content": "print('ok')"},
         {"path": "src/new.py", "action": "create", "content": "print('new')"},
+        {"path": "src/assets", "action": "mkdir"},
+        {"path": "src/copied.py", "action": "copy", "src": "src/app.py"},
+        {"path": "src/moved.py", "action": "move", "src": "src/old.py"},
     ]
 
 
@@ -191,6 +198,34 @@ def test_change_schema_rejects_content_for_delete() -> None:
         assert "must not include 'content'" in str(exc)
     else:
         raise AssertionError("Expected content to be rejected for delete actions")
+
+
+def test_change_schema_requires_src_for_copy_and_move() -> None:
+    for action in ("copy", "move"):
+        try:
+            CodeChangeSchema(path="dst.py", action=action)
+        except Exception as exc:
+            assert "requires field 'src'" in str(exc)
+        else:
+            raise AssertionError(f"Expected src to be required for {action} actions")
+
+
+def test_change_schema_rejects_src_for_non_copy_move_actions() -> None:
+    try:
+        CodeChangeSchema(path="src/app.py", action="update", content="x", src="old.py")
+    except Exception as exc:
+        assert "must not include 'src'" in str(exc)
+    else:
+        raise AssertionError("Expected src to be rejected for update actions")
+
+
+def test_change_schema_rejects_src_path_traversal() -> None:
+    try:
+        CodeChangeSchema(path="dst.py", action="copy", src="../escape.py")
+    except Exception as exc:
+        assert "parent-directory traversal" in str(exc)
+    else:
+        raise AssertionError("Expected traversal src paths to be rejected")
 
 
 def test_change_schema_rejects_path_traversal() -> None:
@@ -316,11 +351,11 @@ def test_history_loads_legacy_file_on_first_run(monkeypatch, tmp_path: Path) -> 
 def test_build_working_context_appends_applied_changes() -> None:
     base_context = "<codebase>\n<file path=\"src/app.py\">\nprint('old')\n</file>\n</codebase>"
     changes = [
-        {
-            "path": "src/new.py",
-            "action": "create",
-            "content": "print('new')",
-        }
+        CodeChangeSchema(
+            path="src/new.py",
+            action="create",
+            content="print('new')",
+        )
     ]
 
     working_context = build_working_context(base_context, changes)

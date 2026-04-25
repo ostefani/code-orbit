@@ -104,6 +104,7 @@ class PreviewChangePayload:
     exists: bool = False
     missing: bool = False
     unchanged: bool = False
+    src: str | None = None
 
 
 @dataclass(frozen=True)

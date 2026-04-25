@@ -77,9 +77,28 @@ def test_build_context(temp_codebase: Path) -> None:
     assert all("node_modules" not in path for path in paths)
 
     assert "<codebase>" in result.context
+    assert "<file_tree>" in result.context
+    assert "src/" in result.context
     assert '<file path="src/main.py">' in result.context
     assert "print('hello')" in result.context
     assert result.used_tokens > 0
+
+
+def test_build_context_includes_empty_dirs_in_file_tree(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+
+    result = asyncio.run(
+        build_context_async(
+            str(tmp_path),
+            "Build a React ButtonComponent in src",
+            Config(),
+            embedding_client=FakeSemanticEmbeddingClient(),
+        )
+    )
+
+    assert "<file_tree>" in result.context
+    assert "src/" in result.context
+    assert '<file path="src/' not in result.context
 
 
 def test_context_token_limit(temp_codebase: Path) -> None:
