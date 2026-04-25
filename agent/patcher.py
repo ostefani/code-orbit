@@ -15,7 +15,7 @@ from .events import (
     GitCommitSucceededPayload,
     PreviewChangePayload,
 )
-from .llm import CodeChangeSchema
+from .schemas import CodeChangeSchema
 
 CodeChangeInput = CodeChangeSchema | dict[str, Any]
 
@@ -31,6 +31,10 @@ def _safe_path(root: Path, rel_path: str) -> Path:
 def _validate_changes(changes: list[CodeChangeInput]) -> list[CodeChangeSchema]:
     validated: list[CodeChangeSchema] = []
     for index, change in enumerate(changes, 1):
+        if isinstance(change, CodeChangeSchema):
+            validated.append(change)
+            continue
+
         try:
             validated.append(CodeChangeSchema.model_validate(change))
         except ValidationError as exc:
@@ -53,7 +57,6 @@ def preview_changes(
     for change in _validate_changes(changes):
         path = _safe_path(root_path, change.path)
         action = change.action
-        new_content = change.content or ""
 
         if action == "delete":
             if event_bus:
@@ -69,6 +72,7 @@ def preview_changes(
             continue
 
         if action == "create":
+            content = change.content
             if event_bus:
                 event_bus.publish(AgentEvent(
                     name="preview.change",
@@ -76,7 +80,7 @@ def preview_changes(
                     payload=PreviewChangePayload(
                         path=change.path,
                         action=action,
-                        content=new_content,
+                        content=content,
                     ),
                 ))
             continue
@@ -109,6 +113,7 @@ def preview_changes(
             continue
 
         # update
+        new_content = change.content
         if path.exists():
             old_content = path.read_text(encoding="utf-8")
             if old_content == new_content:
@@ -117,7 +122,7 @@ def preview_changes(
                         name="preview.change",
                         state="previewing",
                         payload=PreviewChangePayload(
-                            path=change["path"],
+                            path=change.path,
                             action=action,
                             unchanged=True,
                         ),
@@ -204,7 +209,7 @@ def apply_changes(
                 ))
 
         elif action in ("create", "update"):
-            content = change.content or ""
+            content = change.content
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content, encoding="utf-8")
             if event_bus:

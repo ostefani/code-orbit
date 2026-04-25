@@ -8,7 +8,8 @@ import pytest
 
 from agent.config import Config
 from agent.events import AgentEvent, EventBus, RunProposalReadyPayload
-from agent.llm import CodeChangeSchema, CodeResponseSchema, PlanSchema, PlanTaskSchema
+from agent.llm import CodeResponseSchema, PlanSchema, PlanTaskSchema
+from agent.schemas import CodeChangeSchema
 from rich.console import Console
 import main as main_module
 from main import load_history, save_history
@@ -76,7 +77,7 @@ def test_validate_llm_result_accepts_valid_changes() -> None:
     summary, changes = validate_llm_result(CodeResponseSchema(**result), Config())
 
     assert summary == "Update files"
-    assert changes == [
+    assert [change.model_dump(exclude_none=True) for change in changes] == [
         {"path": "src/app.py", "action": "update", "content": "print('ok')"},
         {"path": "src/new.py", "action": "create", "content": "print('new')"},
         {"path": "src/assets", "action": "mkdir"},
@@ -350,11 +351,11 @@ def test_history_loads_legacy_file_on_first_run(monkeypatch, tmp_path: Path) -> 
 def test_build_working_context_appends_applied_changes() -> None:
     base_context = "<codebase>\n<file path=\"src/app.py\">\nprint('old')\n</file>\n</codebase>"
     changes = [
-        {
-            "path": "src/new.py",
-            "action": "create",
-            "content": "print('new')",
-        }
+        CodeChangeSchema(
+            path="src/new.py",
+            action="create",
+            content="print('new')",
+        )
     ]
 
     working_context = build_working_context(base_context, changes)

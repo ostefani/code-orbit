@@ -1,8 +1,8 @@
 import pytest
 from pathlib import Path
-from agent.llm import CodeChangeSchema
-from agent.patcher import apply_changes, git_commit
-from agent.events import ApplyFilePayload, EventBus
+from agent.patcher import apply_changes, git_commit, preview_changes
+from agent.events import ApplyFilePayload, EventBus, PreviewChangePayload
+from agent.schemas import CodeChangeSchema
 
 
 @pytest.fixture
@@ -31,6 +31,27 @@ def test_apply_accepts_code_change_schema(temp_project):
 
     assert str(temp_project / "typed.py") in affected
     assert (temp_project / "typed.py").read_text() == "print('typed')"
+
+
+def test_preview_unchanged_update_accepts_code_change_schema(temp_project):
+    changes = [
+        CodeChangeSchema(
+            path="existing.py",
+            action="update",
+            content="print('old')",
+        )
+    ]
+    bus = EventBus()
+    events = []
+    bus.subscribe(events.append)
+
+    preview_changes(str(temp_project), changes, event_bus=bus)
+
+    assert len(events) == 1
+    assert events[0].name == "preview.change"
+    assert isinstance(events[0].payload, PreviewChangePayload)
+    assert events[0].payload.path == "existing.py"
+    assert events[0].payload.unchanged is True
 
 
 def test_apply_update(temp_project):
