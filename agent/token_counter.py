@@ -23,11 +23,27 @@ Config fields
                         (required for tiktoken backend; falls back to config.model)
 """
 
+import logging
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
 from .config import Config
+
+
+_logger = logging.getLogger(__name__)
+_warned: set[str] = set()
+
+
+def _warn_once(msg: str) -> None:
+    if msg not in _warned:
+        _warned.add(msg)
+        _logger.warning(msg)
+
+
+def _log_warnings(result: "TokenCountResult") -> None:
+    for warning in result.warnings:
+        _warn_once(warning)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -122,7 +138,7 @@ def count_tokens(text: str, config: Config) -> TokenCountResult:
 
         if model_path is None:
             estimate = _estimate(text)
-            return TokenCountResult(
+            result = TokenCountResult(
                 count=estimate.count,
                 tokenizer_name=estimate.tokenizer_name,
                 warnings=(
@@ -130,29 +146,35 @@ def count_tokens(text: str, config: Config) -> TokenCountResult:
                     "tokenizer_model_path in config. Falling back to estimate.",
                 ),
             )
+            _log_warnings(result)
+            return result
 
         resolved = model_path.expanduser().resolve()
         if not resolved.exists():
             estimate = _estimate(text)
-            return TokenCountResult(
+            result = TokenCountResult(
                 count=estimate.count,
                 tokenizer_name=estimate.tokenizer_name,
                 warnings=(
                     f"tokenizer.json not found at '{resolved}'. Falling back to estimate.",
                 ),
             )
+            _log_warnings(result)
+            return result
 
         try:
             return _count_tokenizers_json(text, str(resolved))
         except Exception as exc:
             estimate = _estimate(text)
-            return TokenCountResult(
+            result = TokenCountResult(
                 count=estimate.count,
                 tokenizer_name=estimate.tokenizer_name,
                 warnings=(
                     f"tokenizers_json counting failed: {exc}. Falling back to estimate.",
                 ),
             )
+            _log_warnings(result)
+            return result
 
     # ── tiktoken (OpenAI-family) ──────────────────────────────────────────────
     if backend == "tiktoken":
@@ -161,7 +183,7 @@ def count_tokens(text: str, config: Config) -> TokenCountResult:
             return _count_tiktoken(text, model_name)
         except Exception as exc:
             estimate = _estimate(text)
-            return TokenCountResult(
+            result = TokenCountResult(
                 count=estimate.count,
                 tokenizer_name=estimate.tokenizer_name,
                 warnings=(
@@ -169,6 +191,8 @@ def count_tokens(text: str, config: Config) -> TokenCountResult:
                     "Falling back to estimate.",
                 ),
             )
+            _log_warnings(result)
+            return result
 
     # ── estimate (default / explicit) ─────────────────────────────────────────
     return _estimate(text)
