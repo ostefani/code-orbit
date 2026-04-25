@@ -15,7 +15,7 @@ def test_apply_create(temp_project):
     changes = [{"path": "new.py", "action": "create", "content": "print('new')"}]
     affected = apply_changes(str(temp_project), changes)
 
-    assert str(temp_project / "new.py") in affected
+    assert "new.py" in affected
     assert (temp_project / "new.py").read_text() == "print('new')"
 
 
@@ -29,7 +29,7 @@ def test_apply_accepts_code_change_schema(temp_project):
     ]
     affected = apply_changes(str(temp_project), changes)
 
-    assert str(temp_project / "typed.py") in affected
+    assert "typed.py" in affected
     assert (temp_project / "typed.py").read_text() == "print('typed')"
 
 
@@ -60,7 +60,7 @@ def test_apply_update(temp_project):
     ]
     affected = apply_changes(str(temp_project), changes)
 
-    assert str(temp_project / "existing.py") in affected
+    assert "existing.py" in affected
     assert (temp_project / "existing.py").read_text() == "print('updated')"
 
 
@@ -68,7 +68,7 @@ def test_apply_delete(temp_project):
     changes = [{"path": "existing.py", "action": "delete"}]
     affected = apply_changes(str(temp_project), changes)
 
-    assert str(temp_project / "existing.py") in affected
+    assert "existing.py" in affected
     assert not (temp_project / "existing.py").exists()
 
 
@@ -76,7 +76,7 @@ def test_apply_mkdir(temp_project):
     changes = [{"path": "subdir/deep", "action": "mkdir"}]
     affected = apply_changes(str(temp_project), changes)
 
-    assert str(temp_project / "subdir" / "deep") in affected
+    assert str(Path("subdir") / "deep") in affected
     assert (temp_project / "subdir" / "deep").is_dir()
 
 
@@ -84,7 +84,7 @@ def test_apply_copy(temp_project):
     changes = [{"path": "copied.py", "action": "copy", "src": "existing.py"}]
     affected = apply_changes(str(temp_project), changes)
 
-    assert str(temp_project / "copied.py") in affected
+    assert "copied.py" in affected
     assert (temp_project / "copied.py").read_text() == "print('old')"
 
 
@@ -99,8 +99,8 @@ def test_apply_move_includes_source_and_destination(temp_project):
     changes = [{"path": "moved.py", "action": "move", "src": "existing.py"}]
     affected = apply_changes(str(temp_project), changes)
 
-    assert str(temp_project / "existing.py") in affected
-    assert str(temp_project / "moved.py") in affected
+    assert "existing.py" in affected
+    assert "moved.py" in affected
     assert not (temp_project / "existing.py").exists()
     assert (temp_project / "moved.py").read_text() == "print('old')"
 
@@ -146,9 +146,20 @@ def test_git_commit_stages_relative_paths(temp_project, monkeypatch):
     git_commit(
         str(temp_project),
         "Add feature",
-        [str(temp_project / "existing.py"), str(temp_project / "new.py")],
+        ["existing.py", str(temp_project / "new.py")],
     )
 
     assert calls[0][0] == ["git", "add", "existing.py", "new.py"]
     assert calls[0][1] == str(temp_project)
     assert calls[1][0] == ["git", "commit", "-m", "[llm-agent] Add feature"]
+
+
+def test_git_commit_rejects_path_traversal(temp_project, monkeypatch):
+    monkeypatch.setattr("agent.patcher.subprocess.run", lambda *args, **kwargs: None)
+
+    with pytest.raises(ValueError, match="outside repository root"):
+        git_commit(
+            str(temp_project),
+            "Add feature",
+            ["../outside.py"],
+        )

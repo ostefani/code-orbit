@@ -28,6 +28,19 @@ def _safe_path(root: Path, rel_path: str) -> Path:
     return resolved
 
 
+def _relativize_path(resolved_root: Path, file_path: str) -> str:
+    assert resolved_root.is_absolute(), "resolved_root must be an absolute Path."
+
+    candidate = Path(file_path)
+    resolved_candidate = (resolved_root / candidate).resolve()
+    try:
+        return str(resolved_candidate.relative_to(resolved_root))
+    except ValueError as exc:
+        raise ValueError(
+            f"Path {file_path!r} is outside repository root {str(resolved_root)!r}"
+        ) from exc
+
+
 def _validate_changes(changes: list[CodeChangeInput]) -> list[CodeChangeSchema]:
     validated: list[CodeChangeSchema] = []
     for index, change in enumerate(changes, 1):
@@ -263,7 +276,7 @@ def apply_changes(
             # shutil.move falls back to copy+delete on cross-device moves, so
             # this is not atomic across filesystems.
             shutil.move(str(src_path), str(path))
-            affected.append(str(src_path))
+            affected.append(_relativize_path(root_path, str(src_path)))
             if event_bus:
                 event_bus.publish(AgentEvent(
                     name="apply.file",
@@ -275,7 +288,7 @@ def apply_changes(
                     ),
                 ))
 
-        affected.append(str(path))
+        affected.append(_relativize_path(root_path, str(path)))
 
     return affected
 
@@ -287,11 +300,7 @@ def git_commit(
     root_path = Path(root).resolve()
     relative_files: list[str] = []
     for file_path in files:
-        candidate = Path(file_path)
-        if candidate.is_absolute():
-            relative_files.append(str(candidate.resolve().relative_to(root_path)))
-        else:
-            relative_files.append(str(candidate))
+        relative_files.append(_relativize_path(root_path, file_path))
 
     try:
         subprocess.run(
