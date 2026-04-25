@@ -25,18 +25,34 @@ class VectorStore:
             record.path: record for record in records
         }
         self._numpy_index: _VectorStoreNumpyIndex | None = None
+        self._pending_index_records: list[FileEmbeddingRecord] = []
 
     @property
     def records(self) -> tuple[FileEmbeddingRecord, ...]:
         return tuple(self._records[path] for path in sorted(self._records))
 
     def add(self, record: FileEmbeddingRecord) -> None:
+        replacing_existing = record.path in self._records
         self._records[record.path] = record
-        self._numpy_index = None
+        if self._numpy_index is None:
+            return
+        if replacing_existing:
+            self._numpy_index = None
+            self._pending_index_records.clear()
+            return
+
+        self._pending_index_records.append(record)
 
     def _ensure_numpy_index(self) -> _VectorStoreNumpyIndex:
         if self._numpy_index is None:
             self._numpy_index = self._build_numpy_index()
+            self._pending_index_records.clear()
+        elif self._pending_index_records:
+            self._numpy_index = self._append_records_to_numpy_index(
+                self._numpy_index,
+                self._pending_index_records,
+            )
+            self._pending_index_records.clear()
         return self._numpy_index
 
     def _build_numpy_index(self) -> _VectorStoreNumpyIndex:
@@ -82,6 +98,94 @@ class VectorStore:
             chunk_indexes=chunk_indexes_array,
             chunk_start_lines=chunk_start_lines_array,
             chunk_end_lines=chunk_end_lines_array,
+        )
+
+    def _append_records_to_numpy_index(
+        self,
+        index: _VectorStoreNumpyIndex,
+        records: Sequence[FileEmbeddingRecord],
+    ) -> _VectorStoreNumpyIndex:
+        record_paths = [*index.record_paths]
+        record_sha256s = [*index.record_sha256s]
+        chunk_vectors: list[Sequence[float]] = []
+        chunk_path_ids: list[int] = []
+        chunk_indexes: list[int] = []
+        chunk_start_lines: list[int] = []
+        chunk_end_lines: list[int] = []
+
+        for record in records:
+            record_index = len(record_paths)
+            record_paths.append(record.path)
+            record_sha256s.append(record.sha256)
+
+            for chunk in sorted(record.chunks, key=lambda item: item.index):
+                chunk_vectors.append(chunk.vector)
+                chunk_path_ids.append(record_index)
+                chunk_indexes.append(chunk.index)
+                chunk_start_lines.append(chunk.start_line)
+                chunk_end_lines.append(chunk.end_line)
+
+        if not chunk_vectors:
+            return _VectorStoreNumpyIndex(
+                record_paths=tuple(record_paths),
+                record_sha256s=tuple(record_sha256s),
+                chunk_matrix=index.chunk_matrix,
+                chunk_path_ids=index.chunk_path_ids,
+                chunk_norms=index.chunk_norms,
+                chunk_indexes=index.chunk_indexes,
+                chunk_start_lines=index.chunk_start_lines,
+                chunk_end_lines=index.chunk_end_lines,
+            )
+
+        new_chunk_matrix = np.asarray(
+            chunk_vectors,
+            dtype=np.float64,
+        )
+        if index.chunk_matrix.size == 0:
+            chunk_matrix = new_chunk_matrix
+        elif index.chunk_matrix.shape[1] == new_chunk_matrix.shape[1]:
+            chunk_matrix = np.vstack((index.chunk_matrix, new_chunk_matrix))
+        else:
+            raise ValueError(
+                "Added embedding dimension does not match indexed embeddings: "
+                f"got {new_chunk_matrix.shape[1]}, expected "
+                f"{index.chunk_matrix.shape[1]}."
+            )
+
+        return _VectorStoreNumpyIndex(
+            record_paths=tuple(record_paths),
+            record_sha256s=tuple(record_sha256s),
+            chunk_matrix=chunk_matrix,
+            chunk_path_ids=np.concatenate(
+                (
+                    index.chunk_path_ids,
+                    np.asarray(chunk_path_ids, dtype=np.int64),
+                )
+            ),
+            chunk_norms=np.concatenate(
+                (
+                    index.chunk_norms,
+                    np.linalg.norm(new_chunk_matrix, axis=1),
+                )
+            ),
+            chunk_indexes=np.concatenate(
+                (
+                    index.chunk_indexes,
+                    np.asarray(chunk_indexes, dtype=np.int64),
+                )
+            ),
+            chunk_start_lines=np.concatenate(
+                (
+                    index.chunk_start_lines,
+                    np.asarray(chunk_start_lines, dtype=np.int64),
+                )
+            ),
+            chunk_end_lines=np.concatenate(
+                (
+                    index.chunk_end_lines,
+                    np.asarray(chunk_end_lines, dtype=np.int64),
+                )
+            ),
         )
 
     def _chunk_cosines(self, query_vector: Sequence[float]) -> tuple[

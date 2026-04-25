@@ -615,10 +615,111 @@ def test_vector_store_builds_numpy_index_lazily() -> None:
 
     store.add(
         FileEmbeddingRecord(
+            path="auth/middleware.py",
+            sha256="b",
+            chunks=(
+                ChunkEmbedding(
+                    index=0,
+                    vector=(0.0, 1.0),
+                    start_line=1,
+                    end_line=2,
+                    content_hash="y",
+                ),
+            ),
+        )
+    )
+    scores = store.semantic_scores((0.0, 1.0))
+
+    assert build_calls == 2
+    assert scores["auth/middleware.py"] == 1.0
+
+
+def test_vector_store_add_batches_pending_records_for_warm_numpy_index() -> None:
+    store = VectorStore(
+        records=[
+            FileEmbeddingRecord(
+                path="auth/middleware.py",
+                sha256="a",
+                chunks=(
+                    ChunkEmbedding(
+                        index=0,
+                        vector=(1.0, 0.0),
+                        start_line=1,
+                        end_line=2,
+                        content_hash="x",
+                    ),
+                ),
+            ),
+        ]
+    )
+
+    assert store.semantic_scores((1.0, 0.0))["auth/middleware.py"] == 1.0
+
+    store.add(
+        FileEmbeddingRecord(
             path="tests/test_rate.py",
             sha256="b",
+            chunks=(
+                ChunkEmbedding(
+                    index=0,
+                    vector=(0.0, 1.0),
+                    start_line=1,
+                    end_line=2,
+                    content_hash="y",
+                ),
+            ),
+        )
+    )
+    store.add(
+        FileEmbeddingRecord(
+            path="docs/empty.md",
+            sha256="c",
             chunks=(),
         )
     )
+
+    scores = store.semantic_scores((0.0, 1.0))
+
+    assert scores["tests/test_rate.py"] == 1.0
+    assert scores["auth/middleware.py"] == 0.0
+    assert scores["docs/empty.md"] == 0.0
+
+
+def test_vector_store_add_rejects_mismatched_dimensions_for_warm_index() -> None:
+    store = VectorStore(
+        records=[
+            FileEmbeddingRecord(
+                path="auth/middleware.py",
+                sha256="a",
+                chunks=(
+                    ChunkEmbedding(
+                        index=0,
+                        vector=(1.0, 0.0),
+                        start_line=1,
+                        end_line=2,
+                        content_hash="x",
+                    ),
+                ),
+            ),
+        ]
+    )
     store.semantic_scores((1.0, 0.0))
-    assert build_calls == 2
+
+    store.add(
+        FileEmbeddingRecord(
+            path="tests/test_rate.py",
+            sha256="b",
+            chunks=(
+                ChunkEmbedding(
+                    index=0,
+                    vector=(1.0, 0.0, 0.0),
+                    start_line=1,
+                    end_line=2,
+                    content_hash="y",
+                ),
+            ),
+        )
+    )
+
+    with pytest.raises(ValueError, match="dimension"):
+        store.semantic_scores((1.0, 0.0))
