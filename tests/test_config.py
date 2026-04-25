@@ -49,6 +49,7 @@ def test_config_defaults_include_embedding_settings() -> None:
     assert config.chat_api_base.startswith("http://localhost:")
     assert config.chat_context_window == 16384
     assert config.chat_streaming is True
+    assert config.max_content_bytes == 10_000_000
     assert config.structured_llm_temperature == 0.2
     assert config.structured_llm_retries == 1
     assert config.structured_llm_retry_delay_seconds == 1.0

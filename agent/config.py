@@ -90,6 +90,7 @@ class Config(BaseModel):
 
     max_context_tokens: int = 16384
     max_response_tokens: int = 4096
+    max_content_bytes: int = 10_000_000
     structured_llm_temperature: float = 0.2
     structured_llm_retries: int = 1
     structured_llm_retry_delay_seconds: float = 1.0
@@ -156,6 +157,8 @@ class Config(BaseModel):
                 "max_response_tokens must be smaller than max_context_tokens "
                 "so there is room for file context."
             )
+        if self.max_content_bytes <= 0:
+            raise ValueError("max_content_bytes must be greater than zero.")
         if self.structured_llm_temperature < 0:
             raise ValueError("structured_llm_temperature must not be negative.")
         if self.structured_llm_retries < 0:

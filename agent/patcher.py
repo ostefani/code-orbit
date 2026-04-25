@@ -15,9 +15,11 @@ from .events import (
     GitCommitSucceededPayload,
     PreviewChangePayload,
 )
+from .config import Config
 from .schemas import CodeChangeSchema
 
 CodeChangeInput = CodeChangeSchema | dict[str, Any]
+DEFAULT_MAX_CONTENT_BYTES = 10_000_000
 
 
 def _publish_preview(event_bus: EventBus, payload: PreviewChangePayload) -> None:
@@ -188,12 +190,16 @@ def apply_changes(
     root: str,
     changes: list[CodeChangeInput],
     event_bus: EventBus | None = None,
+    config: Config | None = None,
 ) -> list[str]:
     """
     Apply all changes to disk. Returns list of affected file paths.
     """
     root_path = Path(root).resolve()
     affected = []
+    max_content_bytes = (
+        config.max_content_bytes if config is not None else DEFAULT_MAX_CONTENT_BYTES
+    )
 
     for change in _validate_changes(changes):
         path = _resolve_path_under_root(root_path, change.path)
@@ -221,8 +227,15 @@ def apply_changes(
 
         elif action in ("create", "update"):
             content = change.content
+            assert content is not None
+            encoded = content.encode("utf-8")
+            if len(encoded) > max_content_bytes:
+                raise ValueError(
+                    f"Content for {change.path!r} exceeds the "
+                    f"{max_content_bytes}-byte limit ({len(encoded)} bytes)."
+                )
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content, encoding="utf-8")
+            path.write_bytes(encoded)
             if event_bus:
                 event_bus.publish(AgentEvent(
                     name="apply.file",

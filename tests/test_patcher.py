@@ -2,6 +2,7 @@ import subprocess
 
 import pytest
 from pathlib import Path
+from agent.config import Config
 from agent.patcher import apply_changes, git_commit, preview_changes
 from agent.events import ApplyFilePayload, EventBus, PreviewChangePayload
 from agent.schemas import CodeChangeSchema
@@ -33,6 +34,20 @@ def test_apply_accepts_code_change_schema(temp_project):
 
     assert "typed.py" in affected
     assert (temp_project / "typed.py").read_text() == "print('typed')"
+
+
+def test_apply_create_respects_max_content_bytes_boundary(temp_project):
+    content = "a" * 5
+    changes = [{"path": "boundary.txt", "action": "create", "content": content}]
+
+    affected = apply_changes(
+        str(temp_project),
+        changes,
+        config=Config(max_content_bytes=5),
+    )
+
+    assert "boundary.txt" in affected
+    assert (temp_project / "boundary.txt").read_text(encoding="utf-8") == content
 
 
 def test_preview_unchanged_update_accepts_code_change_schema(temp_project):
@@ -88,6 +103,30 @@ def test_apply_update(temp_project):
 
     assert "existing.py" in affected
     assert (temp_project / "existing.py").read_text() == "print('updated')"
+
+
+def test_apply_update_rejects_content_over_max_content_bytes(temp_project):
+    content = "a" * 6
+    changes = [{"path": "existing.py", "action": "update", "content": content}]
+
+    with pytest.raises(
+        ValueError,
+        match=r"exceeds the 5-byte limit \(6 bytes\)",
+    ):
+        apply_changes(
+            str(temp_project),
+            changes,
+            config=Config(max_content_bytes=5),
+        )
+
+    assert (temp_project / "existing.py").read_text() == "print('old')"
+
+
+def test_apply_create_rejects_non_string_content(temp_project):
+    changes = [{"path": "bad.txt", "action": "create", "content": 123}]
+
+    with pytest.raises(ValueError, match="Input should be a valid string"):
+        apply_changes(str(temp_project), changes)
 
 
 def test_apply_delete(temp_project):
