@@ -20,6 +20,16 @@ from .schemas import CodeChangeSchema
 CodeChangeInput = CodeChangeSchema | dict[str, Any]
 
 
+def _publish_preview(event_bus: EventBus, payload: PreviewChangePayload) -> None:
+    event_bus.publish(
+        AgentEvent(
+            name="preview.change",
+            state="previewing",
+            payload=payload,
+        )
+    )
+
+
 def _resolve_path_under_root(resolved_root: Path, file_path: str) -> Path:
     """Resolve a path under an already-resolved repository root."""
     assert resolved_root.is_absolute(), "resolved_root must be an absolute Path."
@@ -78,53 +88,49 @@ def preview_changes(
         action = change.action
 
         if action == "delete":
-            event_bus.publish(AgentEvent(
-                name="preview.change",
-                state="previewing",
-                payload=PreviewChangePayload(
+            _publish_preview(
+                event_bus,
+                PreviewChangePayload(
                     path=change.path,
                     action=action,
                     exists=path.exists(),
                 ),
-            ))
+            )
             continue
 
         if action == "create":
             content = change.content
-            event_bus.publish(AgentEvent(
-                name="preview.change",
-                state="previewing",
-                payload=PreviewChangePayload(
+            _publish_preview(
+                event_bus,
+                PreviewChangePayload(
                     path=change.path,
                     action=action,
                     content=content,
                 ),
-            ))
+            )
             continue
 
         if action == "mkdir":
-            event_bus.publish(AgentEvent(
-                name="preview.change",
-                state="previewing",
-                payload=PreviewChangePayload(
+            _publish_preview(
+                event_bus,
+                PreviewChangePayload(
                     path=change.path,
                     action=action,
                     exists=path.exists(),
                 ),
-            ))
+            )
             continue
 
         if action in ("copy", "move"):
-            event_bus.publish(AgentEvent(
-                name="preview.change",
-                state="previewing",
-                payload=PreviewChangePayload(
+            _publish_preview(
+                event_bus,
+                PreviewChangePayload(
                     path=change.path,
                     action=action,
                     src=change.src,
                     exists=path.exists(),
                 ),
-            ))
+            )
             continue
 
         # update
@@ -132,15 +138,14 @@ def preview_changes(
         if path.exists():
             old_content = path.read_text(encoding="utf-8")
             if old_content == new_content:
-                event_bus.publish(AgentEvent(
-                    name="preview.change",
-                    state="previewing",
-                    payload=PreviewChangePayload(
+                _publish_preview(
+                    event_bus,
+                    PreviewChangePayload(
                         path=change.path,
                         action=action,
                         unchanged=True,
                     ),
-                ))
+                )
                 continue
 
             old_lines = old_content.splitlines(keepends=True)
@@ -159,26 +164,24 @@ def preview_changes(
             for line in diff:
                 diff_text += f"{line}\n"
 
-            event_bus.publish(AgentEvent(
-                name="preview.change",
-                state="previewing",
-                payload=PreviewChangePayload(
+            _publish_preview(
+                event_bus,
+                PreviewChangePayload(
                     path=change.path,
                     action=action,
                     diff_text=diff_text.strip(),
                 ),
-            ))
+            )
         else:
-            event_bus.publish(AgentEvent(
-                name="preview.change",
-                state="previewing",
-                payload=PreviewChangePayload(
+            _publish_preview(
+                event_bus,
+                PreviewChangePayload(
                     path=change.path,
                     action=action,
                     content=new_content,
                     missing=True,
                 ),
-            ))
+            )
 
 
 def apply_changes(
