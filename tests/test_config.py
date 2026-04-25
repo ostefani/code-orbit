@@ -48,6 +48,8 @@ def test_config_defaults_include_embedding_settings() -> None:
     assert config.chat_context_window == 16384
     assert config.chat_streaming is True
     assert config.structured_llm_temperature == 0.2
+    assert config.structured_llm_retries == 1
+    assert config.structured_llm_retry_delay_seconds == 1.0
 
 
 def test_config_derives_chat_context_window_from_context_budget() -> None:
@@ -66,6 +68,18 @@ def test_config_allows_custom_structured_llm_temperature() -> None:
     config = Config(structured_llm_temperature=0.7)
 
     assert config.structured_llm_temperature == 0.7
+
+
+def test_config_allows_custom_structured_llm_retries() -> None:
+    config = Config(structured_llm_retries=3)
+
+    assert config.structured_llm_retries == 3
+
+
+def test_config_allows_custom_structured_llm_retry_delay() -> None:
+    config = Config(structured_llm_retry_delay_seconds=2.5)
+
+    assert config.structured_llm_retry_delay_seconds == 2.5
 
 
 def test_config_is_immutable_after_construction() -> None:

@@ -100,6 +100,7 @@ embedding_provider_options:
 ```
 
 `chat_*` settings control the provider used for planning and code generation.
+`structured_*` settings control JSON-structured LLM output behavior.
 `embedding_*` settings control semantic retrieval. Provider-specific SDK
 settings belong in the matching `*_provider_options` mapping.
 
@@ -183,6 +184,8 @@ api_base: 'http://localhost:8080/v1' # llama.cpp server
 max_context_tokens: 16384 # match your model's context size
 max_response_tokens: 4096 # reserve room for the model's reply
 structured_llm_temperature: 0.2 # JSON output tuning knob
+structured_llm_retries: 1 # retry malformed JSON and transient provider errors
+structured_llm_retry_delay_seconds: 1.0 # base delay for rate-limit retries
 chat_provider: openai # chat provider adapter
 chat_api_base: 'http://localhost:8080/v1'
 chat_api_key: 'dummy'

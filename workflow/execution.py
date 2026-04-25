@@ -63,6 +63,31 @@ def format_execution_feedback(
     return "\n".join(parts)
 
 
+def _handle_task_failure(
+    runtime: WorkflowRuntime,
+    event_bus: EventBus,
+    exc: Exception,
+) -> WorkflowState:
+    runtime.execution_feedback = format_execution_feedback(
+        str(exc),
+        runtime.all_changes,
+    )
+    runtime.replan_attempts += 1
+    reset_execution_state(runtime)
+    event_bus.publish(AgentEvent(
+        name="run.failed",
+        level="error",
+        state=WorkflowState.EXECUTING.value,
+        message=str(exc),
+        payload=EmptyPayload(),
+    ))
+    return (
+        WorkflowState.PLANNING
+        if runtime.replan_attempts <= MAX_REPLAN_ATTEMPTS
+        else WorkflowState.FAILED
+    )
+
+
 def validate_llm_result(
     result: CodeResponseSchema,
     config: Config,
@@ -205,46 +230,12 @@ async def run_execution_stage(
                     on_chunk=on_chunk,
                 )
         except Exception as exc:
-            runtime.execution_feedback = format_execution_feedback(
-                str(exc),
-                runtime.all_changes,
-            )
-            runtime.replan_attempts += 1
-            reset_execution_state(runtime)
-            event_bus.publish(AgentEvent(
-                name="run.failed",
-                level="error",
-                state=WorkflowState.EXECUTING.value,
-                message=str(exc),
-                payload=EmptyPayload(),
-            ))
-            return (
-                WorkflowState.PLANNING
-                if runtime.replan_attempts <= MAX_REPLAN_ATTEMPTS
-                else WorkflowState.FAILED
-            )
+            return _handle_task_failure(runtime, event_bus, exc)
 
         try:
             summary, changes = validate_llm_result(result, runtime.config)
         except ValueError as exc:
-            runtime.execution_feedback = format_execution_feedback(
-                str(exc),
-                runtime.all_changes,
-            )
-            runtime.replan_attempts += 1
-            reset_execution_state(runtime)
-            event_bus.publish(AgentEvent(
-                name="run.failed",
-                level="error",
-                state=WorkflowState.EXECUTING.value,
-                message=str(exc),
-                payload=EmptyPayload(),
-            ))
-            return (
-                WorkflowState.PLANNING
-                if runtime.replan_attempts <= MAX_REPLAN_ATTEMPTS
-                else WorkflowState.FAILED
-            )
+            return _handle_task_failure(runtime, event_bus, exc)
 
         if summary:
             runtime.task_summaries.append(summary)

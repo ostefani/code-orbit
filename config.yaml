@@ -2,6 +2,8 @@
 max_context_tokens: 16384
 max_response_tokens: 4096
 structured_llm_temperature: 0.2
+structured_llm_retries: 1
+structured_llm_retry_delay_seconds: 1.0
 
 # Chat provider for planning / code generation
 chat_provider: openai

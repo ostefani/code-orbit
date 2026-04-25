@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Callable
 from typing import TypeVar
 
@@ -13,6 +14,9 @@ from .chat import (
     ChatAdapter,
     ChatGenerationSettings,
     ChatMessage,
+    ProviderError,
+    ProviderRateLimitError,
+    ProviderUnavailableError,
     run_chat,
     stream_chat,
 )
@@ -159,7 +163,7 @@ async def _call_structured_llm(
     chat_adapter: ChatAdapter | None = None,
     on_chunk: Callable[[str], None] | None = None,
 ) -> ModelT:
-    messages = (
+    base_messages = (
         ChatMessage(role="system", content=system_prompt),
         ChatMessage(role="user", content=user_message),
     )
@@ -168,7 +172,57 @@ async def _call_structured_llm(
         temperature=config.structured_llm_temperature,
         response_format="json_object",
     )
+    retryable_attempts = config.structured_llm_retries
+    messages = base_messages
 
+    for attempt in range(retryable_attempts + 1):
+        try:
+            content = await _get_structured_llm_content(
+                messages,
+                config,
+                generation=generation,
+                chat_adapter=chat_adapter,
+                on_chunk=on_chunk,
+            )
+            if not content:
+                raise ValueError("Model returned empty content.")
+
+            return parser(content)
+        except ValidationError as exc:
+            if attempt >= retryable_attempts:
+                raise ValueError(
+                    f"Invalid structured response from model: {exc}"
+                ) from exc
+            messages = (
+                base_messages[0],
+                ChatMessage(
+                    role="user",
+                    content=_build_structured_llm_retry_message(user_message, exc),
+                ),
+            )
+        except ValueError as exc:
+            if str(exc) != "Model returned empty content.":
+                raise
+            if attempt >= retryable_attempts:
+                raise
+        except ProviderError as exc:
+            if not _is_retryable_structured_llm_error(exc):
+                raise
+            if attempt >= retryable_attempts:
+                raise
+            await _sleep_before_structured_llm_retry(config, exc, attempt)
+
+    raise RuntimeError("Structured LLM retry loop exhausted unexpectedly.")
+
+
+async def _get_structured_llm_content(
+    messages: tuple[ChatMessage, ChatMessage],
+    config: Config,
+    *,
+    generation: ChatGenerationSettings,
+    chat_adapter: ChatAdapter | None,
+    on_chunk: Callable[[str], None] | None,
+) -> str:
     if on_chunk is not None and config.chat_streaming:
         chunks: list[str] = []
         async for delta in stream_chat(
@@ -180,23 +234,41 @@ async def _call_structured_llm(
             if delta.content:
                 chunks.append(delta.content)
                 on_chunk(delta.content)
-        content = "".join(chunks).strip()
-    else:
-        response = await run_chat(
-            messages,
-            config,
-            adapter=chat_adapter,
-            generation=generation,
-        )
-        content = response.content.strip()
+        return "".join(chunks).strip()
 
-    if not content:
-        raise ValueError("Model returned empty content.")
+    response = await run_chat(
+        messages,
+        config,
+        adapter=chat_adapter,
+        generation=generation,
+    )
+    return response.content.strip()
 
-    try:
-        return parser(content)
-    except ValidationError as exc:
-        raise ValueError(f"Invalid structured response from model: {exc}") from exc
+
+def _build_structured_llm_retry_message(
+    user_message: str,
+    exc: ValidationError,
+) -> str:
+    return (
+        f"{user_message}\n\n"
+        "Your previous response was not valid JSON.\n"
+        f"Parser error: {exc}\n"
+        "Return ONLY a valid JSON object that matches the schema."
+    )
+
+
+def _is_retryable_structured_llm_error(exc: ProviderError) -> bool:
+    return isinstance(exc, (ProviderRateLimitError, ProviderUnavailableError))
+
+
+async def _sleep_before_structured_llm_retry(
+    config: Config,
+    exc: ProviderError,
+    attempt: int,
+) -> None:
+    if isinstance(exc, ProviderRateLimitError):
+        delay = config.structured_llm_retry_delay_seconds * (2**attempt)
+        await asyncio.sleep(delay)
 
 
 async def call_architect(

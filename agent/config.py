@@ -46,6 +46,8 @@ class Config:
     max_context_tokens: int = 16384
     max_response_tokens: int = 4096
     structured_llm_temperature: float = 0.2
+    structured_llm_retries: int = 1
+    structured_llm_retry_delay_seconds: float = 1.0
     tokenizer_backend: str = "estimate"
 
     tokenizer_model_path: Path | None = None
@@ -124,6 +126,12 @@ class Config:
             )
         if self.structured_llm_temperature < 0:
             raise ValueError("structured_llm_temperature must not be negative.")
+        if self.structured_llm_retries < 0:
+            raise ValueError("structured_llm_retries must not be negative.")
+        if self.structured_llm_retry_delay_seconds < 0:
+            raise ValueError(
+                "structured_llm_retry_delay_seconds must not be negative."
+            )
         chat_context_window = self.chat_context_window
         if chat_context_window is None:
             chat_context_window = self.max_context_tokens

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from agent.chat import ProviderRateLimitError, ProviderUnavailableError
 from agent.config import Config
 from agent.events import AgentEvent, EventBus, RunProposalReadyPayload
 from agent.llm import CodeResponseSchema, PlanSchema, PlanTaskSchema, call_coder
@@ -306,6 +307,212 @@ def test_call_coder_rejects_multi_task_plans() -> None:
 
     with pytest.raises(ValueError, match="single-task plans"):
         asyncio.run(call_coder(plan, "<codebase />", Config()))
+
+
+def test_call_coder_retries_invalid_json_response(monkeypatch) -> None:
+    plan = PlanSchema(
+        summary="Recover from malformed JSON",
+        tasks=[
+            PlanTaskSchema(
+                files=["src/app.py"],
+                goal="Update the CLI entry point",
+                reasoning="The entry point needs the first change.",
+            )
+        ],
+    )
+    responses = iter(
+        [
+            "not-json",
+            CodeResponseSchema(summary="Recovered", changes=[]).model_dump_json(),
+        ]
+    )
+    seen_messages: list[tuple[str, ...]] = []
+
+    async def fake_run_chat(messages, config, adapter=None, generation=None):
+        seen_messages.append(tuple(message.content for message in messages))
+        return SimpleNamespace(content=next(responses))
+
+    monkeypatch.setattr("agent.llm.run_chat", fake_run_chat)
+
+    result = asyncio.run(
+        call_coder(
+            plan,
+            "<codebase />",
+            Config(chat_streaming=False, structured_llm_retries=1),
+        )
+    )
+
+    assert result.summary == "Recovered"
+    assert len(seen_messages) == 2
+    assert seen_messages[1][1].startswith(
+        "<codebase />\n\n<approved_plan_summary>"
+    )
+    assert "not valid JSON" in seen_messages[1][1]
+
+
+def test_call_coder_retries_transient_provider_error(monkeypatch) -> None:
+    plan = PlanSchema(
+        summary="Recover from a transient provider error",
+        tasks=[
+            PlanTaskSchema(
+                files=["src/app.py"],
+                goal="Update the CLI entry point",
+                reasoning="The entry point needs the first change.",
+            )
+        ],
+    )
+    responses = iter(
+        [
+            ProviderUnavailableError("openai", "temporary outage"),
+            SimpleNamespace(
+                content=CodeResponseSchema(
+                    summary="Recovered",
+                    changes=[],
+                ).model_dump_json()
+            ),
+        ]
+    )
+    seen_messages: list[tuple[str, ...]] = []
+
+    async def fake_run_chat(messages, config, adapter=None, generation=None):
+        seen_messages.append(tuple(message.content for message in messages))
+        response = next(responses)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    monkeypatch.setattr("agent.llm.run_chat", fake_run_chat)
+
+    result = asyncio.run(
+        call_coder(
+            plan,
+            "<codebase />",
+            Config(chat_streaming=False, structured_llm_retries=1),
+        )
+    )
+
+    assert result.summary == "Recovered"
+    assert len(seen_messages) == 2
+    assert seen_messages[0][0] == seen_messages[1][0]
+    assert seen_messages[0][1] == seen_messages[1][1]
+
+
+def test_call_coder_retries_rate_limit_with_backoff(monkeypatch) -> None:
+    plan = PlanSchema(
+        summary="Recover from rate limiting",
+        tasks=[
+            PlanTaskSchema(
+                files=["src/app.py"],
+                goal="Update the CLI entry point",
+                reasoning="The entry point needs the first change.",
+            )
+        ],
+    )
+    responses = iter(
+        [
+            ProviderRateLimitError("openai", "too many requests"),
+            SimpleNamespace(
+                content=CodeResponseSchema(
+                    summary="Recovered",
+                    changes=[],
+                ).model_dump_json()
+            ),
+        ]
+    )
+    delays: list[float] = []
+
+    async def fake_run_chat(messages, config, adapter=None, generation=None):
+        response = next(responses)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    async def fake_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr("agent.llm.run_chat", fake_run_chat)
+    monkeypatch.setattr("agent.llm.asyncio.sleep", fake_sleep)
+
+    result = asyncio.run(
+        call_coder(
+            plan,
+            "<codebase />",
+            Config(chat_streaming=False, structured_llm_retries=1),
+        )
+    )
+
+    assert result.summary == "Recovered"
+    assert delays == [1.0]
+
+
+def test_call_coder_streams_with_injected_adapter(monkeypatch) -> None:
+    plan = PlanSchema(
+        summary="Use the provided adapter",
+        tasks=[
+            PlanTaskSchema(
+                files=["src/app.py"],
+                goal="Update the CLI entry point",
+                reasoning="The entry point needs the first change.",
+            )
+        ],
+    )
+    seen_adapters: list[object] = []
+    chunks: list[str] = []
+
+    async def fake_stream_chat(messages, config, adapter=None, generation=None):
+        seen_adapters.append(adapter)
+        yield SimpleNamespace(content='{"summary":"ok","changes":[]}')  # type: ignore[misc]
+
+    monkeypatch.setattr("agent.llm.stream_chat", fake_stream_chat)
+
+    adapter = object()
+    result = asyncio.run(
+        call_coder(
+            plan,
+            "<codebase />",
+            Config(chat_streaming=True),
+            chat_adapter=adapter,
+            on_chunk=chunks.append,
+        )
+    )
+
+    assert result.summary == "ok"
+    assert seen_adapters == [adapter]
+    assert chunks == ['{"summary":"ok","changes":[]}']
+
+
+def test_handle_task_failure_returns_next_state() -> None:
+    from workflow._state import WorkflowRuntime
+    from workflow.execution import MAX_REPLAN_ATTEMPTS, _handle_task_failure
+
+    runtime = WorkflowRuntime(
+        target_dir=".",
+        prompt="prompt",
+        config=Config(),
+    )
+    runtime.all_changes = [
+        CodeChangeSchema(path="src/app.py", action="update", content="print('x')")
+    ]
+    runtime.working_context = "working"
+    runtime.final_summary = "summary"
+    event_bus = EventBus()
+    events = []
+    event_bus.subscribe(events.append)
+
+    state = _handle_task_failure(runtime, event_bus, ValueError("boom"))
+
+    assert runtime.replan_attempts == 1
+    assert runtime.execution_feedback is not None
+    assert runtime.all_changes == []
+    assert runtime.task_summaries == []
+    assert runtime.final_summary == ""
+    assert state.name == "PLANNING"
+    assert len(events) == 1
+    assert events[0].name == "run.failed"
+
+    runtime.replan_attempts = MAX_REPLAN_ATTEMPTS
+    state = _handle_task_failure(runtime, event_bus, ValueError("boom"))
+    assert state.name == "FAILED"
 
 
 def test_open_plan_in_editor_parses_modified_plan(monkeypatch, tmp_path) -> None:
