@@ -2,6 +2,8 @@ import json
 import hashlib
 from pathlib import Path
 
+import pytest
+
 from agent.config import Config
 from agent.embeddings import (
     EmbeddingCache,
@@ -422,6 +424,115 @@ def test_vector_store_ranks_closest_chunk() -> None:
 
     assert results[0].path == "auth/middleware.py"
     assert results[0].score > results[1].score
+
+
+def test_vector_store_search_returns_best_chunk_metadata() -> None:
+    store = VectorStore(
+        records=[
+            FileEmbeddingRecord(
+                path="auth/middleware.py",
+                sha256="a",
+                chunks=(
+                    ChunkEmbedding(
+                        index=0,
+                        vector=(0.0, 1.0),
+                        start_line=1,
+                        end_line=2,
+                        content_hash="x",
+                    ),
+                    ChunkEmbedding(
+                        index=1,
+                        vector=(1.0, 0.0),
+                        start_line=3,
+                        end_line=4,
+                        content_hash="y",
+                    ),
+                ),
+            ),
+            FileEmbeddingRecord(
+                path="tests/test_rate.py",
+                sha256="b",
+                chunks=(
+                    ChunkEmbedding(
+                        index=0,
+                        vector=(0.0, 1.0),
+                        start_line=1,
+                        end_line=2,
+                        content_hash="z",
+                    ),
+                ),
+            ),
+        ]
+    )
+
+    results = store.search((1.0, 0.0))
+    scores = store.semantic_scores((1.0, 0.0))
+
+    assert results[0].path == "auth/middleware.py"
+    assert results[0].score == scores["auth/middleware.py"]
+    assert results[0].chunk_index == 1
+    assert results[0].start_line == 3
+
+
+def test_vector_store_search_ties_use_lowest_chunk_index() -> None:
+    store = VectorStore(
+        records=[
+            FileEmbeddingRecord(
+                path="auth/middleware.py",
+                sha256="a",
+                chunks=(
+                    ChunkEmbedding(
+                        index=2,
+                        vector=(1.0, 0.0),
+                        start_line=5,
+                        end_line=6,
+                        content_hash="later",
+                    ),
+                    ChunkEmbedding(
+                        index=1,
+                        vector=(1.0, 0.0),
+                        start_line=3,
+                        end_line=4,
+                        content_hash="earlier",
+                    ),
+                ),
+            ),
+        ]
+    )
+
+    results = store.search((1.0, 0.0))
+
+    assert results[0].chunk_index == 1
+    assert results[0].start_line == 3
+
+
+def test_vector_store_rejects_wrong_query_dimension() -> None:
+    store = VectorStore(
+        records=[
+            FileEmbeddingRecord(
+                path="auth/middleware.py",
+                sha256="a",
+                chunks=(
+                    ChunkEmbedding(
+                        index=0,
+                        vector=(1.0, 0.0),
+                        start_line=1,
+                        end_line=2,
+                        content_hash="x",
+                    ),
+                ),
+            ),
+        ]
+    )
+
+    with pytest.raises(ValueError, match="dimension"):
+        store.search((1.0, 0.0, 0.0))
+
+    with pytest.raises(ValueError, match="dimension"):
+        store.semantic_scores((1.0, 0.0, 0.0))
+
+    with pytest.raises(ValueError, match="dimension"):
+        store.score_path("auth/middleware.py", (1.0, 0.0, 0.0))
 
 
 def test_vector_store_semantic_scores_use_best_chunk() -> None:
