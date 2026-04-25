@@ -47,6 +47,7 @@ def test_config_defaults_include_embedding_settings() -> None:
     assert config.chat_api_base.startswith("http://localhost:")
     assert config.chat_context_window == 16384
     assert config.chat_streaming is True
+    assert config.structured_llm_temperature == 0.2
 
 
 def test_config_derives_chat_context_window_from_context_budget() -> None:
@@ -59,6 +60,12 @@ def test_config_preserves_explicit_chat_context_window() -> None:
     config = Config(max_context_tokens=8192, chat_context_window=4096)
 
     assert config.chat_context_window == 4096
+
+
+def test_config_allows_custom_structured_llm_temperature() -> None:
+    config = Config(structured_llm_temperature=0.7)
+
+    assert config.structured_llm_temperature == 0.7
 
 
 def test_config_is_immutable_after_construction() -> None:

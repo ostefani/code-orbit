@@ -182,6 +182,7 @@ Edit `config.yaml`:
 api_base: 'http://localhost:8080/v1' # llama.cpp server
 max_context_tokens: 16384 # match your model's context size
 max_response_tokens: 4096 # reserve room for the model's reply
+structured_llm_temperature: 0.2 # JSON output tuning knob
 chat_provider: openai # chat provider adapter
 chat_api_base: 'http://localhost:8080/v1'
 chat_api_key: 'dummy'

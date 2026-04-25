@@ -45,6 +45,7 @@ class Config:
 
     max_context_tokens: int = 16384
     max_response_tokens: int = 4096
+    structured_llm_temperature: float = 0.2
     tokenizer_backend: str = "estimate"
 
     tokenizer_model_path: Path | None = None
@@ -121,6 +122,8 @@ class Config:
                 "max_response_tokens must be smaller than max_context_tokens "
                 "so there is room for file context."
             )
+        if self.structured_llm_temperature < 0:
+            raise ValueError("structured_llm_temperature must not be negative.")
         chat_context_window = self.chat_context_window
         if chat_context_window is None:
             chat_context_window = self.max_context_tokens

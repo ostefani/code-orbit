@@ -165,7 +165,7 @@ async def _call_structured_llm(
     )
     generation = ChatGenerationSettings(
         max_tokens=config.max_response_tokens,
-        temperature=0.2,
+        temperature=config.structured_llm_temperature,
         response_format="json_object",
     )
 

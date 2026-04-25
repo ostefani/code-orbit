@@ -1,6 +1,7 @@
 # Context window in tokens — match your model's actual context size
 max_context_tokens: 16384
 max_response_tokens: 4096
+structured_llm_temperature: 0.2
 
 # Chat provider for planning / code generation
 chat_provider: openai
