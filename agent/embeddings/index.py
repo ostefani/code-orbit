@@ -150,10 +150,12 @@ async def build_embedding_index(
         if isinstance(result, BaseException):
             raise result
 
-        batch, vectors = result
-        for (rel_path, _file_hash, chunk), vector in zip(batch, vectors, strict=True):
-            if rel_path in failed_files:
-                continue
+        _batch, vectors = result
+        for (rel_path, _file_hash, chunk), vector in zip(
+            requested_batch,
+            vectors,
+            strict=True,
+        ):
             refreshed_records.setdefault(rel_path, []).append(
                 ChunkEmbedding(
                     index=chunk.index,

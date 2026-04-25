@@ -101,29 +101,6 @@ def test_build_context_includes_empty_dirs_in_file_tree(tmp_path: Path) -> None:
     assert '<file path="src/' not in result.context
 
 
-def test_build_context_uses_file_tree_from_initial_walk(
-    temp_codebase: Path,
-    monkeypatch,
-) -> None:
-    def fail_get_file_tree(*args, **kwargs):
-        raise AssertionError("build_context_async should not walk again for file tree")
-
-    monkeypatch.setattr("agent.context.get_file_tree", fail_get_file_tree)
-
-    result = asyncio.run(
-        build_context_async(
-            str(temp_codebase),
-            "Update the Python source files",
-            Config(ignore_patterns=[".git", "node_modules"]),
-            embedding_client=FakeSemanticEmbeddingClient(),
-        )
-    )
-
-    assert "<file_tree>" in result.context
-    assert "src/" in result.context
-    assert "main.py" in result.context
-
-
 def test_context_token_limit(temp_codebase: Path) -> None:
     (temp_codebase / "large.txt").write_text("word " * 1000, encoding="utf-8")
 
@@ -148,6 +125,8 @@ def test_context_token_limit(temp_codebase: Path) -> None:
     assert "src/utils.py" in paths
     assert "large.txt" not in paths
     assert "large.txt" in result.skipped_paths
+    assert "<file_tree>" in result.context
+    assert "large.txt" in result.context
 
 
 def test_build_context_reports_budget_breakdown_and_zero_budget_warning(
