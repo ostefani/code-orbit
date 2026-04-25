@@ -1,5 +1,4 @@
 from collections.abc import Callable
-from pathlib import Path
 from typing import Literal, TypeVar
 
 from pydantic import (
@@ -19,6 +18,7 @@ from .chat import (
     stream_chat,
 )
 from .config import Config
+from .utils import validate_repo_relative_path
 
 ARCHITECT_SYSTEM_PROMPT = """\
 You are The Architect, a senior software planner.
@@ -100,19 +100,6 @@ RULES:
 SYSTEM_PROMPT = ARCHITECT_SYSTEM_PROMPT
 
 
-def _validate_repo_relative_path(path: str, label: str) -> str:
-    normalized = path.strip()
-    if not normalized:
-        raise ValueError(f"{label} must not be empty.")
-    if Path(normalized).is_absolute():
-        raise ValueError(f"{label} must be a relative path, got {path!r}.")
-    if any(part == ".." for part in Path(normalized).parts):
-        raise ValueError(
-            f"{label} must not contain parent-directory traversal: {path!r}."
-        )
-    return normalized
-
-
 class PlanTaskSchema(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -126,7 +113,7 @@ class PlanTaskSchema(BaseModel):
         normalized: list[str] = []
         seen: set[str] = set()
         for index, file_path in enumerate(files, 1):
-            cleaned = _validate_repo_relative_path(
+            cleaned = validate_repo_relative_path(
                 file_path, f"Plan task file #{index}"
             )
             if cleaned in seen:
@@ -154,7 +141,7 @@ class CodeChangeSchema(BaseModel):
 
     @model_validator(mode="after")
     def validate_content_for_action(self) -> "CodeChangeSchema":
-        self.path = _validate_repo_relative_path(self.path, "Change path")
+        self.path = validate_repo_relative_path(self.path, "Change path")
         if self.action in {"create", "update"} and self.content is None:
             raise ValueError(
                 f"Action {self.action!r} requires field 'content' to be provided."
@@ -168,7 +155,7 @@ class CodeChangeSchema(BaseModel):
         if self.action == "mkdir" and self.content is not None:
             raise ValueError("mkdir must not include 'content'.")
         if self.src:
-            self.src = _validate_repo_relative_path(self.src, "Change src")
+            self.src = validate_repo_relative_path(self.src, "Change src")
         return self
 
 

@@ -422,7 +422,7 @@ def get_file_tree(root: str, config: Config) -> str:
         ]
         depth = len(current.relative_to(root_path).parts)
         indent = "  " * depth
-        for dirname in dirnames:
+        for dirname in sorted(dirnames):
             lines.append(f"{indent}{dirname}/")
         for fname in sorted(filenames):
             fpath = current / fname

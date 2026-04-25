@@ -209,7 +209,10 @@ def apply_changes(
                 ))
 
         elif action == "copy":
-            src_path = _safe_path(root_path, change["src"])
+            src = change.get("src")
+            if not src:
+                raise ValueError(f"copy action for {change['path']!r} is missing 'src'.")
+            src_path = _safe_path(root_path, src)
             path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src_path, path)
             if event_bus:
@@ -224,8 +227,13 @@ def apply_changes(
                 ))
 
         elif action == "move":
-            src_path = _safe_path(root_path, change["src"])
+            src = change.get("src")
+            if not src:
+                raise ValueError(f"move action for {change['path']!r} is missing 'src'.")
+            src_path = _safe_path(root_path, src)
             path.parent.mkdir(parents=True, exist_ok=True)
+            # shutil.move falls back to copy+delete on cross-device moves, so
+            # this is not atomic across filesystems.
             shutil.move(str(src_path), str(path))
             affected.append(str(src_path))
             if event_bus:

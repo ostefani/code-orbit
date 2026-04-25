@@ -37,3 +37,16 @@ def _is_within_root(path: Path, root: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def validate_repo_relative_path(path: str, label: str) -> str:
+    normalized = path.strip()
+    if not normalized:
+        raise ValueError(f"{label} must not be empty.")
+    if Path(normalized).is_absolute():
+        raise ValueError(f"{label} must be a relative path, got {path!r}.")
+    if any(part == ".." for part in Path(normalized).parts):
+        raise ValueError(
+            f"{label} must not contain parent-directory traversal: {path!r}."
+        )
+    return normalized

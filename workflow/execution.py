@@ -9,11 +9,8 @@ from agent.events import (
     RunProposalReadyPayload,
     StateChangedPayload,
 )
-from agent.llm import (
-    CodeResponseSchema,
-    _validate_repo_relative_path,
-    call_coder_for_task,
-)
+from agent.llm import CodeResponseSchema, call_coder_for_task
+from agent.utils import validate_repo_relative_path
 
 from ._state import (
     FileChange,
@@ -83,7 +80,7 @@ def validate_llm_result(
         if not path.strip():
             raise ValueError(f"Change #{index} is missing a valid 'path' string.")
 
-        normalized_path = _validate_repo_relative_path(path, f"Change #{index} path")
+        normalized_path = validate_repo_relative_path(path, f"Change #{index} path")
         if normalized_path in seen_paths:
             raise ValueError(f"Duplicate change path detected: {normalized_path!r}")
         seen_paths.add(normalized_path)
@@ -113,7 +110,7 @@ def validate_llm_result(
                 raise ValueError(
                     f"Change #{index} action={action!r} requires a non-empty 'src'."
                 )
-            normalized_src = _validate_repo_relative_path(
+            normalized_src = validate_repo_relative_path(
                 src, f"Change #{index} src"
             )
             validated_changes.append(

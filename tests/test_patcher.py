@@ -52,6 +52,13 @@ def test_apply_copy(temp_project):
     assert (temp_project / "copied.py").read_text() == "print('old')"
 
 
+def test_apply_copy_requires_src(temp_project):
+    changes = [{"path": "copied.py", "action": "copy"}]
+
+    with pytest.raises(ValueError, match="copy action.*missing 'src'"):
+        apply_changes(str(temp_project), changes)
+
+
 def test_apply_move_includes_source_and_destination(temp_project):
     changes = [{"path": "moved.py", "action": "move", "src": "existing.py"}]
     affected = apply_changes(str(temp_project), changes)
@@ -60,6 +67,13 @@ def test_apply_move_includes_source_and_destination(temp_project):
     assert str(temp_project / "moved.py") in affected
     assert not (temp_project / "existing.py").exists()
     assert (temp_project / "moved.py").read_text() == "print('old')"
+
+
+def test_apply_move_requires_src(temp_project):
+    changes = [{"path": "moved.py", "action": "move"}]
+
+    with pytest.raises(ValueError, match="move action.*missing 'src'"):
+        apply_changes(str(temp_project), changes)
 
 
 def test_apply_changes_emits_events(temp_project):
