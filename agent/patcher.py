@@ -28,13 +28,23 @@ def _resolve_path_under_root(resolved_root: Path, file_path: str) -> Path:
     if not resolved_candidate.is_relative_to(resolved_root):
         raise PermissionError(
             f"Path traversal detected: {file_path!r}"
-        )
+    )
     return resolved_candidate
+
+
+def _relativize_resolved_path(resolved_root: Path, resolved_path: Path) -> str:
+    """Convert an already-resolved path under a resolved root to a relative path."""
+    assert resolved_root.is_absolute(), "resolved_root must be an absolute Path."
+    assert resolved_path.is_absolute(), "resolved_path must be an absolute Path."
+    return str(resolved_path.relative_to(resolved_root))
 
 
 def _relativize_path(resolved_root: Path, file_path: str) -> str:
     """Convert a file path to a repo-relative path under a resolved root."""
-    return str(_resolve_path_under_root(resolved_root, file_path).relative_to(resolved_root))
+    return _relativize_resolved_path(
+        resolved_root,
+        _resolve_path_under_root(resolved_root, file_path),
+    )
 
 
 def _validate_changes(changes: list[CodeChangeInput]) -> list[CodeChangeSchema]:
@@ -203,7 +213,7 @@ def apply_changes(
                     ),
                 ))
             if performed:
-                affected.append(_relativize_path(root_path, str(path)))
+                affected.append(_relativize_resolved_path(root_path, path))
             continue
 
         elif action in ("create", "update"):
@@ -261,7 +271,7 @@ def apply_changes(
             # shutil.move falls back to copy+delete on cross-device moves, so
             # this is not atomic across filesystems.
             shutil.move(str(src_path), str(path))
-            affected.append(_relativize_path(root_path, str(src_path)))
+            affected.append(_relativize_resolved_path(root_path, src_path))
             if event_bus:
                 event_bus.publish(AgentEvent(
                     name="apply.file",
@@ -273,7 +283,7 @@ def apply_changes(
                     ),
                 ))
 
-        affected.append(_relativize_path(root_path, str(path)))
+        affected.append(_relativize_resolved_path(root_path, path))
 
     return affected
 
