@@ -141,6 +141,10 @@ class CodeResponseSchema(BaseModel):
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
 
+class EmptyLLMResponseError(ValueError):
+    pass
+
+
 def format_plan_roadmap(plan: PlanSchema) -> str:
     lines = [f"Plan summary: {plan.summary}"]
     if not plan.tasks:
@@ -185,9 +189,12 @@ async def _call_structured_llm(
                 on_chunk=on_chunk,
             )
             if not content:
-                raise ValueError("Model returned empty content.")
+                raise EmptyLLMResponseError("Model returned empty content.")
 
             return parser(content)
+        except EmptyLLMResponseError:
+            if attempt >= retryable_attempts:
+                raise
         except ValidationError as exc:
             if attempt >= retryable_attempts:
                 raise ValueError(
@@ -200,11 +207,6 @@ async def _call_structured_llm(
                     content=_build_structured_llm_retry_message(user_message, exc),
                 ),
             )
-        except ValueError as exc:
-            if str(exc) != "Model returned empty content.":
-                raise
-            if attempt >= retryable_attempts:
-                raise
         except ProviderError as exc:
             if not _is_retryable_structured_llm_error(exc):
                 raise

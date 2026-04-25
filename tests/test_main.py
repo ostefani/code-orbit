@@ -350,6 +350,40 @@ def test_call_coder_retries_invalid_json_response(monkeypatch) -> None:
     assert "not valid JSON" in seen_messages[1][1]
 
 
+def test_call_coder_retries_empty_response(monkeypatch) -> None:
+    plan = PlanSchema(
+        summary="Recover from empty content",
+        tasks=[
+            PlanTaskSchema(
+                files=["src/app.py"],
+                goal="Update the CLI entry point",
+                reasoning="The entry point needs the first change.",
+            )
+        ],
+    )
+    responses = iter(
+        [
+            "",
+            CodeResponseSchema(summary="Recovered", changes=[]).model_dump_json(),
+        ]
+    )
+
+    async def fake_run_chat(messages, config, adapter=None, generation=None):
+        return SimpleNamespace(content=next(responses))
+
+    monkeypatch.setattr("agent.llm.run_chat", fake_run_chat)
+
+    result = asyncio.run(
+        call_coder(
+            plan,
+            "<codebase />",
+            Config(chat_streaming=False, structured_llm_retries=1),
+        )
+    )
+
+    assert result.summary == "Recovered"
+
+
 def test_call_coder_retries_transient_provider_error(monkeypatch) -> None:
     plan = PlanSchema(
         summary="Recover from a transient provider error",
