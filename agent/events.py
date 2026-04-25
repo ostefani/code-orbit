@@ -174,8 +174,22 @@ class EventBus:
                 print(f"Subscriber error: {exc}\n{tb}", file=sys.stderr)
         return safe_event
 
-    def emit(self, name: str, payload: PayloadT, **kwargs) -> AgentEvent[PayloadT]:
-        event = AgentEvent(name=name, payload=payload, **kwargs)
+    def emit(
+        self,
+        name: str,
+        payload: PayloadT,
+        *,
+        level: str = "info",
+        state: str | None = None,
+        message: str | None = None,
+    ) -> AgentEvent[PayloadT]:
+        event = AgentEvent(
+            name=name,
+            payload=payload,
+            level=level,
+            state=state,
+            message=message,
+        )
         return self.publish(event)
 
 
