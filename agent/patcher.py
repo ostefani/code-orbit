@@ -3,6 +3,9 @@ import difflib
 import shutil
 
 from pathlib import Path
+from typing import Any
+
+from pydantic import ValidationError
 
 from .events import (
     AgentEvent,
@@ -12,6 +15,9 @@ from .events import (
     GitCommitSucceededPayload,
     PreviewChangePayload,
 )
+from .llm import CodeChangeSchema
+
+CodeChangeInput = CodeChangeSchema | dict[str, Any]
 
 
 def _safe_path(root: Path, rel_path: str) -> Path:
@@ -22,17 +28,32 @@ def _safe_path(root: Path, rel_path: str) -> Path:
     return resolved
 
 
-def preview_changes(root: str, changes: list[dict], event_bus: EventBus | None = None) -> None:
+def _validate_changes(changes: list[CodeChangeInput]) -> list[CodeChangeSchema]:
+    validated: list[CodeChangeSchema] = []
+    for index, change in enumerate(changes, 1):
+        try:
+            validated.append(CodeChangeSchema.model_validate(change))
+        except ValidationError as exc:
+            message = exc.errors()[0]["msg"]
+            raise ValueError(f"Invalid change #{index}: {message}") from exc
+    return validated
+
+
+def preview_changes(
+    root: str,
+    changes: list[CodeChangeInput],
+    event_bus: EventBus | None = None,
+) -> None:
     """Emit preview events for each change."""
     if event_bus is None:
         return
 
     root_path = Path(root).resolve()
 
-    for change in changes:
-        path = _safe_path(root_path, change["path"])
-        action = change["action"]
-        new_content = change.get("content", "")
+    for change in _validate_changes(changes):
+        path = _safe_path(root_path, change.path)
+        action = change.action
+        new_content = change.content or ""
 
         if action == "delete":
             if event_bus:
@@ -40,7 +61,7 @@ def preview_changes(root: str, changes: list[dict], event_bus: EventBus | None =
                     name="preview.change",
                     state="previewing",
                     payload=PreviewChangePayload(
-                        path=change["path"],
+                        path=change.path,
                         action=action,
                         exists=path.exists(),
                     ),
@@ -53,7 +74,7 @@ def preview_changes(root: str, changes: list[dict], event_bus: EventBus | None =
                     name="preview.change",
                     state="previewing",
                     payload=PreviewChangePayload(
-                        path=change["path"],
+                        path=change.path,
                         action=action,
                         content=new_content,
                     ),
@@ -66,7 +87,7 @@ def preview_changes(root: str, changes: list[dict], event_bus: EventBus | None =
                     name="preview.change",
                     state="previewing",
                     payload=PreviewChangePayload(
-                        path=change["path"],
+                        path=change.path,
                         action=action,
                         exists=path.exists(),
                     ),
@@ -79,9 +100,9 @@ def preview_changes(root: str, changes: list[dict], event_bus: EventBus | None =
                     name="preview.change",
                     state="previewing",
                     payload=PreviewChangePayload(
-                        path=change["path"],
+                        path=change.path,
                         action=action,
-                        src=change.get("src"),
+                        src=change.src,
                         exists=path.exists(),
                     ),
                 ))
@@ -109,8 +130,8 @@ def preview_changes(root: str, changes: list[dict], event_bus: EventBus | None =
                 difflib.unified_diff(
                     old_lines,
                     new_lines,
-                    fromfile=f"a/{change['path']}",
-                    tofile=f"b/{change['path']}",
+                    fromfile=f"a/{change.path}",
+                    tofile=f"b/{change.path}",
                     lineterm="",
                 )
             )
@@ -131,7 +152,7 @@ def preview_changes(root: str, changes: list[dict], event_bus: EventBus | None =
                     name="preview.change",
                     state="previewing",
                     payload=PreviewChangePayload(
-                        path=change["path"],
+                        path=change.path,
                         action=action,
                         diff_text=diff_text.strip(),
                     ),
@@ -142,7 +163,7 @@ def preview_changes(root: str, changes: list[dict], event_bus: EventBus | None =
                     name="preview.change",
                     state="previewing",
                     payload=PreviewChangePayload(
-                        path=change["path"],
+                        path=change.path,
                         action=action,
                         content=new_content,
                         missing=True,
@@ -151,7 +172,9 @@ def preview_changes(root: str, changes: list[dict], event_bus: EventBus | None =
 
 
 def apply_changes(
-    root: str, changes: list[dict], event_bus: EventBus | None = None
+    root: str,
+    changes: list[CodeChangeInput],
+    event_bus: EventBus | None = None,
 ) -> list[str]:
     """
     Apply all changes to disk. Returns list of affected file paths.
@@ -159,9 +182,9 @@ def apply_changes(
     root_path = Path(root).resolve()
     affected = []
 
-    for change in changes:
-        path = _safe_path(root_path, change["path"])
-        action = change["action"]
+    for change in _validate_changes(changes):
+        path = _safe_path(root_path, change.path)
+        action = change.action
 
         if action == "delete":
             if path.exists():
@@ -174,14 +197,14 @@ def apply_changes(
                     name="apply.file",
                     state="applying",
                     payload=ApplyFilePayload(
-                        path=change["path"],
+                        path=change.path,
                         action=action,
                         performed=performed,
                     ),
                 ))
 
         elif action in ("create", "update"):
-            content = change.get("content", "")
+            content = change.content or ""
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content, encoding="utf-8")
             if event_bus:
@@ -189,7 +212,7 @@ def apply_changes(
                     name="apply.file",
                     state="applying",
                     payload=ApplyFilePayload(
-                        path=change["path"],
+                        path=change.path,
                         action=action,
                         performed=True,
                     ),
@@ -202,16 +225,16 @@ def apply_changes(
                     name="apply.file",
                     state="applying",
                     payload=ApplyFilePayload(
-                        path=change["path"],
+                        path=change.path,
                         action=action,
                         performed=True,
                     ),
                 ))
 
         elif action == "copy":
-            src = change.get("src")
-            if not src:
-                raise ValueError(f"copy action for {change['path']!r} is missing 'src'.")
+            src = change.src
+            if src is None:
+                raise ValueError(f"copy action for {change.path!r} is missing 'src'.")
             src_path = _safe_path(root_path, src)
             path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src_path, path)
@@ -220,16 +243,16 @@ def apply_changes(
                     name="apply.file",
                     state="applying",
                     payload=ApplyFilePayload(
-                        path=change["path"],
+                        path=change.path,
                         action=action,
                         performed=True,
                     ),
                 ))
 
         elif action == "move":
-            src = change.get("src")
-            if not src:
-                raise ValueError(f"move action for {change['path']!r} is missing 'src'.")
+            src = change.src
+            if src is None:
+                raise ValueError(f"move action for {change.path!r} is missing 'src'.")
             src_path = _safe_path(root_path, src)
             path.parent.mkdir(parents=True, exist_ok=True)
             # shutil.move falls back to copy+delete on cross-device moves, so
@@ -241,7 +264,7 @@ def apply_changes(
                     name="apply.file",
                     state="applying",
                     payload=ApplyFilePayload(
-                        path=change["path"],
+                        path=change.path,
                         action=action,
                         performed=True,
                     ),

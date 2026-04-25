@@ -1,5 +1,6 @@
 import pytest
 from pathlib import Path
+from agent.llm import CodeChangeSchema
 from agent.patcher import apply_changes, git_commit
 from agent.events import ApplyFilePayload, EventBus
 
@@ -16,6 +17,20 @@ def test_apply_create(temp_project):
 
     assert str(temp_project / "new.py") in affected
     assert (temp_project / "new.py").read_text() == "print('new')"
+
+
+def test_apply_accepts_code_change_schema(temp_project):
+    changes = [
+        CodeChangeSchema(
+            path="typed.py",
+            action="create",
+            content="print('typed')",
+        )
+    ]
+    affected = apply_changes(str(temp_project), changes)
+
+    assert str(temp_project / "typed.py") in affected
+    assert (temp_project / "typed.py").read_text() == "print('typed')"
 
 
 def test_apply_update(temp_project):
@@ -55,7 +70,7 @@ def test_apply_copy(temp_project):
 def test_apply_copy_requires_src(temp_project):
     changes = [{"path": "copied.py", "action": "copy"}]
 
-    with pytest.raises(ValueError, match="copy action.*missing 'src'"):
+    with pytest.raises(ValueError, match="Invalid change #1.*requires field 'src'"):
         apply_changes(str(temp_project), changes)
 
 
@@ -72,8 +87,15 @@ def test_apply_move_includes_source_and_destination(temp_project):
 def test_apply_move_requires_src(temp_project):
     changes = [{"path": "moved.py", "action": "move"}]
 
-    with pytest.raises(ValueError, match="move action.*missing 'src'"):
+    with pytest.raises(ValueError, match="Invalid change #1.*requires field 'src'"):
         apply_changes(str(temp_project), changes)
+
+
+def test_apply_rejects_malformed_change_without_key_error(temp_project):
+    with pytest.raises(ValueError, match="Invalid change #1"):
+        apply_changes(str(temp_project), [{"action": "create", "content": "x"}])
+
+    assert not (temp_project / "x").exists()
 
 
 def test_apply_changes_emits_events(temp_project):
