@@ -37,17 +37,26 @@ def test_apply_accepts_code_change_schema(temp_project):
 
 
 def test_apply_create_respects_max_content_bytes_boundary(temp_project):
-    content = "a" * 5
-    changes = [{"path": "boundary.txt", "action": "create", "content": content}]
+    config = Config(max_content_bytes=5)
 
-    affected = apply_changes(
+    under_limit = "a" * 4
+    exact_limit = "a" * 5
+
+    under_affected = apply_changes(
         str(temp_project),
-        changes,
-        config=Config(max_content_bytes=5),
+        [{"path": "under.txt", "action": "create", "content": under_limit}],
+        config=config,
+    )
+    exact_affected = apply_changes(
+        str(temp_project),
+        [{"path": "exact.txt", "action": "create", "content": exact_limit}],
+        config=config,
     )
 
-    assert "boundary.txt" in affected
-    assert (temp_project / "boundary.txt").read_text(encoding="utf-8") == content
+    assert "under.txt" in under_affected
+    assert "exact.txt" in exact_affected
+    assert (temp_project / "under.txt").read_text(encoding="utf-8") == under_limit
+    assert (temp_project / "exact.txt").read_text(encoding="utf-8") == exact_limit
 
 
 def test_preview_unchanged_update_accepts_code_change_schema(temp_project):
@@ -108,6 +117,7 @@ def test_apply_update(temp_project):
 def test_apply_update_rejects_content_over_max_content_bytes(temp_project):
     content = "a" * 6
     changes = [{"path": "existing.py", "action": "update", "content": content}]
+    config = Config(max_content_bytes=5)
 
     with pytest.raises(
         ValueError,
@@ -116,7 +126,7 @@ def test_apply_update_rejects_content_over_max_content_bytes(temp_project):
         apply_changes(
             str(temp_project),
             changes,
-            config=Config(max_content_bytes=5),
+            config=config,
         )
 
     assert (temp_project / "existing.py").read_text() == "print('old')"

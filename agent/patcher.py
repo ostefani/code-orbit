@@ -19,7 +19,7 @@ from .config import Config
 from .schemas import CodeChangeSchema
 
 CodeChangeInput = CodeChangeSchema | dict[str, Any]
-DEFAULT_MAX_CONTENT_BYTES = 10_000_000
+DEFAULT_MAX_CONTENT_BYTES = int(Config.model_fields["max_content_bytes"].default)
 
 
 def _publish_preview(event_bus: EventBus, payload: PreviewChangePayload) -> None:
@@ -227,7 +227,10 @@ def apply_changes(
 
         elif action in ("create", "update"):
             content = change.content
-            assert content is not None
+            if content is None:
+                raise RuntimeError(
+                    f"Action {action!r} for {change.path!r} requires content."
+                )
             encoded = content.encode("utf-8")
             if len(encoded) > max_content_bytes:
                 raise ValueError(
