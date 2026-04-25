@@ -71,6 +71,54 @@ class ContextBuildResult:
     budget_breakdown: ContextBudgetBreakdown | None = None
 
 
+def _walk_candidates_and_tree(
+    root: Path,
+    config: Config,
+    *,
+    collect_candidates: bool,
+) -> tuple[list[FileCandidate], str]:
+    candidates: list[FileCandidate] = []
+    tree_lines = [f"{root.name}/"]
+
+    for dirpath, dirnames, filenames in root.walk():
+        current = dirpath
+
+        dirnames[:] = [
+            d
+            for d in sorted(dirnames)
+            if not _is_ignored(current / d, root, config.ignore_patterns)
+            and not (current / d).is_symlink()
+            and _is_within_root(current / d, root)
+        ]
+
+        depth = len(current.relative_to(root).parts)
+        indent = "  " * depth
+        for dirname in dirnames:
+            tree_lines.append(f"{indent}{dirname}/")
+
+        for fname in sorted(filenames):
+            fpath = current / fname
+            if (
+                _is_ignored(fpath, root, config.ignore_patterns)
+                or fpath.is_symlink()
+                or not _is_within_root(fpath, root)
+            ):
+                continue
+
+            tree_lines.append(f"{indent}{fname}")
+            if not collect_candidates:
+                continue
+
+            candidate = _safe_candidate(root, fpath)
+            if candidate is None:
+                continue
+            if candidate.size_bytes > config.max_file_size:
+                continue
+            candidates.append(candidate)
+
+    return candidates, "\n".join(tree_lines)
+
+
 def _safe_candidate(root: Path, path: Path) -> FileCandidate | None:
     try:
         if path.is_symlink():
@@ -237,29 +285,11 @@ async def build_context_async(
     remaining file-token budget.
     """
     root_path = Path(root).resolve()
-    candidates: list[FileCandidate] = []
-
-    for dirpath, dirnames, filenames in root_path.walk():
-        current = dirpath
-
-        dirnames[:] = [
-            d
-            for d in dirnames
-            if not _is_ignored(current / d, root_path, config.ignore_patterns)
-            and not (current / d).is_symlink()
-            and _is_within_root(current / d, root_path)
-        ]
-
-        for fname in sorted(filenames):
-            fpath = current / fname
-            if _is_ignored(fpath, root_path, config.ignore_patterns):
-                continue
-            candidate = _safe_candidate(root_path, fpath)
-            if candidate is None:
-                continue
-            if candidate.size_bytes > config.max_file_size:
-                continue
-            candidates.append(candidate)
+    candidates, file_tree = _walk_candidates_and_tree(
+        root_path,
+        config,
+        collect_candidates=True,
+    )
 
     semantic_scores: dict[str, float] = {}
     owns_semantic_client = embedding_client is None
@@ -385,7 +415,7 @@ async def build_context_async(
         )
 
     parts = ["<codebase>"]
-    parts.append(f"<file_tree>\n{get_file_tree(str(root_path), config)}\n</file_tree>")
+    parts.append(f"<file_tree>\n{file_tree}\n</file_tree>")
     for entry in included:
         parts.append(f'<file path="{entry.path}">')
         parts.append(entry.content)
@@ -409,28 +439,9 @@ async def build_context_async(
 def get_file_tree(root: str, config: Config) -> str:
     """Return a compact file tree string for display."""
     root_path = Path(root).resolve()
-    lines = [f"{root_path.name}/"]
-
-    for dirpath, dirnames, filenames in root_path.walk():
-        current = dirpath
-        dirnames[:] = [
-            d
-            for d in sorted(dirnames)
-            if not _is_ignored(current / d, root_path, config.ignore_patterns)
-            and not (current / d).is_symlink()
-            and _is_within_root(current / d, root_path)
-        ]
-        depth = len(current.relative_to(root_path).parts)
-        indent = "  " * depth
-        for dirname in sorted(dirnames):
-            lines.append(f"{indent}{dirname}/")
-        for fname in sorted(filenames):
-            fpath = current / fname
-            if (
-                not _is_ignored(fpath, root_path, config.ignore_patterns)
-                and not fpath.is_symlink()
-                and _is_within_root(fpath, root_path)
-            ):
-                lines.append(f"{indent}{fname}")
-
-    return "\n".join(lines)
+    _, file_tree = _walk_candidates_and_tree(
+        root_path,
+        config,
+        collect_candidates=False,
+    )
+    return file_tree

@@ -39,6 +39,19 @@ class FakeEmbeddingClient:
         return None
 
 
+class PartiallyFailingEmbeddingClient(FakeEmbeddingClient):
+    def __init__(self, fail_on: str) -> None:
+        super().__init__()
+        self.fail_on = fail_on
+
+    async def embed(self, texts):
+        batch = list(texts)
+        if any(self.fail_on in text for text in batch):
+            self.requests.append(batch)
+            raise RuntimeError("embedding batch failed")
+        return await super().embed(batch)
+
+
 def _write_codebase(root: Path) -> None:
     (root / "src").mkdir()
     (root / "src" / "auth").mkdir()
@@ -313,6 +326,64 @@ def test_build_embedding_sync_reads_each_file_once(tmp_path: Path, monkeypatch) 
     )
 
     assert calls["count"] == expected_files
+
+
+def test_build_embedding_sync_keeps_successful_batches_when_one_batch_fails(
+    tmp_path: Path,
+) -> None:
+    _write_codebase(tmp_path)
+    config = Config(ignore_patterns=[".git", "node_modules"])
+    client = PartiallyFailingEmbeddingClient("assert True")
+
+    result = build_embedding_sync(
+        tmp_path,
+        config,
+        client=client,
+        cache_path=default_embedding_cache_path(tmp_path),
+        batch_size=1,
+    )
+
+    assert result.updated_files == ("src/auth/middleware.py",)
+    assert result.failed_files == ("src/tests.py",)
+    assert result.chunk_count == 1
+    assert set(EmbeddingCache.load(result.cache_path).files) == {
+        "src/auth/middleware.py",
+    }
+
+
+def test_build_embedding_sync_does_not_overwrite_cache_for_failed_batch(
+    tmp_path: Path,
+) -> None:
+    _write_codebase(tmp_path)
+    config = Config(ignore_patterns=[".git", "node_modules"])
+    cache_path = default_embedding_cache_path(tmp_path)
+
+    initial = build_embedding_sync(
+        tmp_path,
+        config,
+        client=FakeEmbeddingClient(),
+        cache_path=cache_path,
+        batch_size=1,
+    )
+    cached_before = EmbeddingCache.load(initial.cache_path)
+    old_record = cached_before.files["src/tests.py"]
+
+    (tmp_path / "src" / "tests.py").write_text(
+        "def test_rate_limit():\n    assert False\n",
+        encoding="utf-8",
+    )
+    result = build_embedding_sync(
+        tmp_path,
+        config,
+        client=PartiallyFailingEmbeddingClient("assert False"),
+        cache_path=cache_path,
+        batch_size=1,
+    )
+
+    cached_after = EmbeddingCache.load(result.cache_path)
+    assert result.updated_files == ()
+    assert result.failed_files == ("src/tests.py",)
+    assert cached_after.files["src/tests.py"] == old_record
 
 
 def test_vector_store_ranks_closest_chunk() -> None:
