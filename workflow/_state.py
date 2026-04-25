@@ -27,11 +27,13 @@ class FileChange(TypedDict, total=False):
     """Represents a single file change produced by the coder model.
 
     ``path`` and ``action`` are always present. ``content`` is present for
-    ``create`` and ``update`` actions and absent for ``delete`` actions.
+    ``create`` and ``update`` actions. ``src`` is present for ``copy`` and
+    ``move`` actions.
     """
     path: Required[str]
     action: Required[str]
     content: str
+    src: str
 
 
 @dataclass

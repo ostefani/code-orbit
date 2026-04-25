@@ -37,11 +37,29 @@ def test_apply_delete(temp_project):
 
 
 def test_apply_mkdir(temp_project):
-    changes = [{"path": "subdir/deep/file.py", "action": "create", "content": "hello"}]
-    apply_changes(str(temp_project), changes)
+    changes = [{"path": "subdir/deep", "action": "mkdir"}]
+    affected = apply_changes(str(temp_project), changes)
 
-    assert (temp_project / "subdir" / "deep" / "file.py").exists()
-    assert (temp_project / "subdir" / "deep" / "file.py").read_text() == "hello"
+    assert str(temp_project / "subdir" / "deep") in affected
+    assert (temp_project / "subdir" / "deep").is_dir()
+
+
+def test_apply_copy(temp_project):
+    changes = [{"path": "copied.py", "action": "copy", "src": "existing.py"}]
+    affected = apply_changes(str(temp_project), changes)
+
+    assert str(temp_project / "copied.py") in affected
+    assert (temp_project / "copied.py").read_text() == "print('old')"
+
+
+def test_apply_move_includes_source_and_destination(temp_project):
+    changes = [{"path": "moved.py", "action": "move", "src": "existing.py"}]
+    affected = apply_changes(str(temp_project), changes)
+
+    assert str(temp_project / "existing.py") in affected
+    assert str(temp_project / "moved.py") in affected
+    assert not (temp_project / "existing.py").exists()
+    assert (temp_project / "moved.py").read_text() == "print('old')"
 
 
 def test_apply_changes_emits_events(temp_project):

@@ -385,6 +385,7 @@ async def build_context_async(
         )
 
     parts = ["<codebase>"]
+    parts.append(f"<file_tree>\n{get_file_tree(str(root_path), config)}\n</file_tree>")
     for entry in included:
         parts.append(f'<file path="{entry.path}">')
         parts.append(entry.content)
@@ -421,6 +422,8 @@ def get_file_tree(root: str, config: Config) -> str:
         ]
         depth = len(current.relative_to(root_path).parts)
         indent = "  " * depth
+        for dirname in dirnames:
+            lines.append(f"{indent}{dirname}/")
         for fname in sorted(filenames):
             fpath = current / fname
             if (

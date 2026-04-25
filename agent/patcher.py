@@ -1,5 +1,6 @@
 import subprocess
 import difflib
+import shutil
 
 from pathlib import Path
 
@@ -55,6 +56,33 @@ def preview_changes(root: str, changes: list[dict], event_bus: EventBus | None =
                         path=change["path"],
                         action=action,
                         content=new_content,
+                    ),
+                ))
+            continue
+
+        if action == "mkdir":
+            if event_bus:
+                event_bus.publish(AgentEvent(
+                    name="preview.change",
+                    state="previewing",
+                    payload=PreviewChangePayload(
+                        path=change["path"],
+                        action=action,
+                        exists=path.exists(),
+                    ),
+                ))
+            continue
+
+        if action in ("copy", "move"):
+            if event_bus:
+                event_bus.publish(AgentEvent(
+                    name="preview.change",
+                    state="previewing",
+                    payload=PreviewChangePayload(
+                        path=change["path"],
+                        action=action,
+                        src=change.get("src"),
+                        exists=path.exists(),
                     ),
                 ))
             continue
@@ -156,6 +184,50 @@ def apply_changes(
             content = change.get("content", "")
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content, encoding="utf-8")
+            if event_bus:
+                event_bus.publish(AgentEvent(
+                    name="apply.file",
+                    state="applying",
+                    payload=ApplyFilePayload(
+                        path=change["path"],
+                        action=action,
+                        performed=True,
+                    ),
+                ))
+
+        elif action == "mkdir":
+            path.mkdir(parents=True, exist_ok=True)
+            if event_bus:
+                event_bus.publish(AgentEvent(
+                    name="apply.file",
+                    state="applying",
+                    payload=ApplyFilePayload(
+                        path=change["path"],
+                        action=action,
+                        performed=True,
+                    ),
+                ))
+
+        elif action == "copy":
+            src_path = _safe_path(root_path, change["src"])
+            path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_path, path)
+            if event_bus:
+                event_bus.publish(AgentEvent(
+                    name="apply.file",
+                    state="applying",
+                    payload=ApplyFilePayload(
+                        path=change["path"],
+                        action=action,
+                        performed=True,
+                    ),
+                ))
+
+        elif action == "move":
+            src_path = _safe_path(root_path, change["src"])
+            path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(src_path), str(path))
+            affected.append(str(src_path))
             if event_bus:
                 event_bus.publish(AgentEvent(
                     name="apply.file",

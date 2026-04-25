@@ -9,7 +9,11 @@ from agent.events import (
     RunProposalReadyPayload,
     StateChangedPayload,
 )
-from agent.llm import CodeResponseSchema, call_coder_for_task
+from agent.llm import (
+    CodeResponseSchema,
+    _validate_repo_relative_path,
+    call_coder_for_task,
+)
 
 from ._state import (
     FileChange,
@@ -19,7 +23,7 @@ from ._state import (
     reset_execution_state,
 )
 
-ALLOWED_ACTIONS = {"create", "update", "delete"}
+ALLOWED_ACTIONS = {"create", "update", "delete", "mkdir", "copy", "move"}
 MAX_REPLAN_ATTEMPTS = 3
 
 
@@ -32,7 +36,11 @@ def render_applied_changes_context(changes: list[FileChange]) -> str:
         path = change["path"]
         action = change["action"]
         content = change.get("content")
-        blocks.append(f'<change path="{path}" action="{action}">')
+        src = change.get("src")
+        attrs = f'path="{path}" action="{action}"'
+        if src:
+            attrs += f' src="{src}"'
+        blocks.append(f"<change {attrs}>")
         if content is not None:
             blocks.append(content)
         blocks.append("</change>")
@@ -75,7 +83,7 @@ def validate_llm_result(
         if not path.strip():
             raise ValueError(f"Change #{index} is missing a valid 'path' string.")
 
-        normalized_path = path.strip()
+        normalized_path = _validate_repo_relative_path(path, f"Change #{index} path")
         if normalized_path in seen_paths:
             raise ValueError(f"Duplicate change path detected: {normalized_path!r}")
         seen_paths.add(normalized_path)
@@ -93,6 +101,24 @@ def validate_llm_result(
                     "Re-run with --allow-delete or set allow_delete: true in config."
                 )
             validated_changes.append(FileChange(path=normalized_path, action=action))
+            continue
+
+        if action == "mkdir":
+            validated_changes.append(FileChange(path=normalized_path, action=action))
+            continue
+
+        if action in {"copy", "move"}:
+            src = change.src
+            if not src or not src.strip():
+                raise ValueError(
+                    f"Change #{index} action={action!r} requires a non-empty 'src'."
+                )
+            normalized_src = _validate_repo_relative_path(
+                src, f"Change #{index} src"
+            )
+            validated_changes.append(
+                FileChange(path=normalized_path, action=action, src=normalized_src)
+            )
             continue
 
         # Defense-in-depth: the schema validator should already enforce this for

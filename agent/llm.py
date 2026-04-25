@@ -46,6 +46,14 @@ RULES:
 7. If no code change is needed, return an empty tasks list and put the full,
    helpful response to the user in the "answer" field. The answer must directly
    address the user's request — do not just state that no changes are needed.
+8. Filesystem-only tasks (copy, move, delete, mkdir) are valid tasks even when
+   no file content changes. Prefer creating files directly over mkdir whenever
+   a file will be placed inside the directory — create actions handle parent
+   directory creation automatically. Only use mkdir for explicitly empty
+   directories.
+9. The <file_tree> block shows the directory structure of the codebase.
+   Directories listed there exist and are valid targets even if they contain
+   no <file> entries. You may propose creating files inside them.
 """
 
 CODER_SYSTEM_PROMPT = """\
@@ -62,16 +70,28 @@ RULES:
      "changes": [
        {
          "path": "relative/path/to/file.py",
-         "action": "update" | "create" | "delete",
-         "content": "full new file content as a string (omit for delete)"
+         "action": "update" | "create" | "delete" | "mkdir" | "copy" | "move",
+         "content": "full new file content as a string (create/update only)",
+         "src": "source path (copy/move only)"
        }
      ]
    }
-3. For "update" and "create", always provide the COMPLETE file content - not a diff.
+3. Action rules:
+   - create/update: always provide COMPLETE file content in "content". No "src".
+     The "create" action automatically creates any missing parent directories;
+     do not add a separate "mkdir" step before creating a file.
+   - delete: no "content", no "src".
+   - mkdir: only use this to create an empty directory with no files in it.
+     If you are creating any file inside a directory, use "create" instead.
+     It handles directory creation automatically. No "content", no "src".
+   - copy: copies file from "src" to "path". No "content".
+   - move: moves/renames file from "src" to "path". No "content".
 4. Only include files that actually need to change.
 5. Preserve existing code style, indentation, and conventions.
-6. Do not hallucinate file paths - only reference files that exist in the codebase
-   (except for "create").
+6. You may create files in directories shown in <file_tree> even if no files
+   from that directory appear in <file> blocks. An empty directory is a valid
+   target. You may also create entirely new directories and files using the
+   "create" action; parent directories are created automatically.
 7. Follow the approved plan and the current task exactly. If the task says no
    changes are needed, return an empty changes list.
 """
@@ -128,8 +148,9 @@ class CodeChangeSchema(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     path: str = Field(min_length=1)
-    action: Literal["create", "update", "delete"]
+    action: Literal["create", "update", "delete", "mkdir", "copy", "move"]
     content: str | None = None
+    src: str | None = None
 
     @model_validator(mode="after")
     def validate_content_for_action(self) -> "CodeChangeSchema":
@@ -140,6 +161,14 @@ class CodeChangeSchema(BaseModel):
             )
         if self.action == "delete" and self.content is not None:
             raise ValueError("Delete actions must not include 'content'.")
+        if self.action in {"copy", "move"} and not self.src:
+            raise ValueError(f"Action {self.action!r} requires field 'src'.")
+        if self.action not in {"copy", "move"} and self.src is not None:
+            raise ValueError(f"Action {self.action!r} must not include 'src'.")
+        if self.action == "mkdir" and self.content is not None:
+            raise ValueError("mkdir must not include 'content'.")
+        if self.src:
+            self.src = _validate_repo_relative_path(self.src, "Change src")
         return self
 
 
