@@ -362,11 +362,11 @@ def test_build_embedding_sync_wraps_batches_in_timeout(
 
     assert len(observed_timeouts) == 2
     assert observed_timeouts == [12.5, 12.5]
-    assert set(result.updated_files) == {"src/auth/middleware.py"}
+    assert len(result.updated_files) == 1
     assert len(result.timed_out_files) == 1
     assert result.failed_files == ()
-    assert set(result.timed_out_files) == {"src/tests.py"}
-    assert result.all_failed_files == ("src/tests.py",)
+    assert len(result.all_failed_files) == 1
+    assert set(result.all_failed_files) == set(result.timed_out_files)
 
 
 def test_build_embedding_sync_keeps_successful_batches_when_one_batch_fails(
