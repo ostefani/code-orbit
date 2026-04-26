@@ -45,6 +45,7 @@ def test_config_defaults_include_embedding_settings() -> None:
     assert config.embedding_api_base.startswith("http://localhost:")
     assert config.embedding_batch_size == 16
     assert config.embedding_max_concurrency == 4
+    assert config.embedding_timeout_seconds == 60.0
     assert config.chat_model == "local"
     assert config.chat_api_base.startswith("http://localhost:")
     assert config.chat_context_window == 16384
@@ -83,6 +84,18 @@ def test_config_allows_custom_structured_llm_retry_delay() -> None:
     config = Config(structured_llm_retry_delay_seconds=2.5)
 
     assert config.structured_llm_retry_delay_seconds == 2.5
+
+
+def test_config_allows_custom_embedding_timeout() -> None:
+    config = Config(embedding_timeout_seconds=15.5)
+
+    assert config.embedding_timeout_seconds == 15.5
+
+
+def test_config_allows_disabling_embedding_timeout() -> None:
+    config = Config(embedding_timeout_seconds=None)
+
+    assert config.embedding_timeout_seconds is None
 
 
 def test_config_is_immutable_after_construction() -> None:

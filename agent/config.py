@@ -85,6 +85,7 @@ class Config(BaseModel):
     embedding_model: str = "nomic-embed-text"
     embedding_batch_size: int = 16
     embedding_max_concurrency: int = 4
+    embedding_timeout_seconds: float | None = 60.0
     embedding_probe_on_startup: bool = False
     embedding_provider_options: dict[str, object] = Field(default_factory=dict)
 
@@ -166,6 +167,13 @@ class Config(BaseModel):
         if self.structured_llm_retry_delay_seconds < 0:
             raise ValueError(
                 "structured_llm_retry_delay_seconds must not be negative."
+            )
+        if (
+            self.embedding_timeout_seconds is not None
+            and self.embedding_timeout_seconds <= 0
+        ):
+            raise ValueError(
+                "embedding_timeout_seconds must be greater than zero or null."
             )
         if self.chat_context_window <= 0:
             raise ValueError("chat_context_window must be greater than zero.")

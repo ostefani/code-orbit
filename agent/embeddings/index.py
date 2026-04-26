@@ -36,6 +36,7 @@ class EmbeddingSyncResult:
     reused_files: tuple[str, ...]
     chunk_count: int
     failed_files: tuple[str, ...] = ()
+    timed_out_files: tuple[str, ...] = ()
 
 
 async def build_embedding_index(
@@ -116,7 +117,10 @@ async def build_embedding_index(
         batch: list[tuple[str, str, CodeChunk]]
     ) -> tuple[list[tuple[str, str, CodeChunk]], list[Sequence[float]]]:
         async with semaphore:
-            return await embed_batch(batch)
+            return await asyncio.wait_for(
+                embed_batch(batch),
+                timeout=config.embedding_timeout_seconds,
+            )
 
     batch_tasks: list[
         tuple[
@@ -129,6 +133,7 @@ async def build_embedding_index(
         batch_tasks.append((batch, asyncio.create_task(guarded_embed_batch(batch))))
 
     failed_files: set[str] = set()
+    timed_out_files: set[str] = set()
     if batch_tasks:
         batch_results = await asyncio.gather(
             *(task for _, task in batch_tasks),
@@ -144,6 +149,9 @@ async def build_embedding_index(
     ):
         if isinstance(result, asyncio.CancelledError):
             raise result
+        if isinstance(result, TimeoutError):
+            timed_out_files.update(rel_path for rel_path, _, _ in requested_batch)
+            continue
         if isinstance(result, Exception):
             failed_files.update(rel_path for rel_path, _, _ in requested_batch)
             continue
@@ -169,7 +177,7 @@ async def build_embedding_index(
     try:
         updated_files: list[str] = []
         for rel_path, (file_hash, _) in pending_files.items():
-            if rel_path in failed_files:
+            if rel_path in failed_files or rel_path in timed_out_files:
                 continue
 
             chunks = refreshed_records.get(rel_path, [])
@@ -197,6 +205,7 @@ async def build_embedding_index(
             reused_files=tuple(reused_files),
             chunk_count=sum(len(record.chunks) for record in cache.files.values()),
             failed_files=tuple(sorted(failed_files)),
+            timed_out_files=tuple(sorted(timed_out_files)),
         )
     finally:
         if owns_client and isinstance(embedding_client, _ClosableEmbeddingAdapter):

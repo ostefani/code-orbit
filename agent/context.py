@@ -328,10 +328,44 @@ async def build_context_async(
                 client=semantic_client,
                 batch_size=config.embedding_batch_size,
             )
-            prompt_vector = (await semantic_client.embed([prompt]))[0]
+            if embedding_result.timed_out_files and event_bus is not None:
+                timed_out = ", ".join(embedding_result.timed_out_files)
+                event_bus.emit(
+                    "context.warning",
+                    ContextWarningPayload(
+                        warning=(
+                            "Semantic ranking was partially updated because "
+                            f"embedding timed out for: {timed_out}"
+                        )
+                    ),
+                    level="warning",
+                    state="building_context",
+                    message="Semantic ranking partially updated after embedding timeout.",
+                )
+            prompt_vector = (
+                await asyncio.wait_for(
+                    semantic_client.embed([prompt]),
+                    timeout=config.embedding_timeout_seconds,
+                )
+            )[0]
             semantic_scores = embedding_result.vector_store.semantic_scores(
                 prompt_vector
             )
+        except TimeoutError:
+            if event_bus is not None:
+                event_bus.emit(
+                    "context.warning",
+                    ContextWarningPayload(
+                        warning=(
+                            "Semantic ranking unavailable because embedding "
+                            "timed out while building context."
+                        )
+                    ),
+                    level="warning",
+                    state="building_context",
+                    message="Semantic ranking unavailable after embedding timeout.",
+                )
+            semantic_scores = {}
         except Exception as exc:
             if event_bus is not None:
                 event_bus.emit(

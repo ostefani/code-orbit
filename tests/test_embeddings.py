@@ -330,6 +330,47 @@ def test_build_embedding_sync_reads_each_file_once(tmp_path: Path, monkeypatch) 
     assert calls["count"] == expected_files
 
 
+def test_build_embedding_sync_wraps_batches_in_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_codebase(tmp_path)
+    config = Config(
+        ignore_patterns=[".git", "node_modules"],
+        embedding_timeout_seconds=12.5,
+    )
+    client = FakeEmbeddingClient()
+    observed_timeouts: list[float | None] = []
+    call_count = {"count": 0}
+
+    async def fake_wait_for(coro, timeout=None):
+        observed_timeouts.append(timeout)
+        call_count["count"] += 1
+        if call_count["count"] == 2:
+            coro.close()
+            raise TimeoutError("embedding request timed out")
+        return await coro
+
+    monkeypatch.setattr("agent.embeddings.index.asyncio.wait_for", fake_wait_for)
+
+    result = build_embedding_sync(
+        tmp_path,
+        config,
+        client=client,
+        cache_path=default_embedding_cache_path(tmp_path),
+        batch_size=1,
+    )
+
+    assert len(observed_timeouts) == 2
+    assert observed_timeouts == [12.5, 12.5]
+    assert len(result.updated_files) == 1
+    assert len(result.timed_out_files) == 1
+    assert set(result.updated_files) | set(result.timed_out_files) == {
+        "src/auth/middleware.py",
+        "src/tests.py",
+    }
+    assert result.failed_files == ()
+
+
 def test_build_embedding_sync_keeps_successful_batches_when_one_batch_fails(
     tmp_path: Path,
 ) -> None:
