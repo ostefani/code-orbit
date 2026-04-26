@@ -118,7 +118,6 @@ async def run_workflow(
         target_dir=target_path,
         prompt=prompt,
         config=config,
-        console=console_obj,
     )
     try:
         runtime.chat_adapter = await create_chat_adapter(config)

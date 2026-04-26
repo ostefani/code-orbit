@@ -22,13 +22,12 @@ async def run_build_context_stage(
         message="Building context.",
         payload=StateChangedPayload(),
     ))
-    with runtime.console.status("[bold green]Analyzing codebase..."):
-        runtime.context_result = await build_context_async(
-            runtime.target_dir,
-            runtime.prompt,
-            runtime.config,
-            event_bus=event_bus,
-        )
+    runtime.context_result = await build_context_async(
+        runtime.target_dir,
+        runtime.prompt,
+        runtime.config,
+        event_bus=event_bus,
+    )
     runtime.working_context = runtime.context_result.context
 
     for warning in runtime.context_result.token_warnings:

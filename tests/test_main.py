@@ -582,7 +582,7 @@ def test_open_plan_in_editor_parses_modified_plan(monkeypatch, tmp_path) -> None
     monkeypatch.setenv("EDITOR", "vim -u NONE")
     temp_path.write_text(original.model_dump_json(indent=2), encoding="utf-8")
 
-    approved = open_plan_in_editor(temp_path, Console(file=StringIO()))
+    approved = open_plan_in_editor(temp_path)
 
     assert approved.summary == "Edited plan"
     assert approved.tasks[0].files == ["src/app.py", "agent/llm.py"]

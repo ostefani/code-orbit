@@ -1,20 +1,21 @@
 import os
 import shlex
 import subprocess
+import sys
 from pathlib import Path
-
-from rich.console import Console
-from rich.prompt import Confirm
+from typing import TYPE_CHECKING
 
 from agent.events import AgentEvent, EmptyPayload, EventBus, StateChangedPayload
-from agent.llm import PlanSchema
 
 from .errors import WorkflowError
 from ._state import WorkflowRuntime, WorkflowState
 from .planning import load_plan_draft
 
+if TYPE_CHECKING:
+    from agent.llm import PlanSchema
 
-def open_plan_in_editor(plan_path: Path, console: Console) -> PlanSchema:
+
+def open_plan_in_editor(plan_path: Path) -> "PlanSchema":
     while True:
         # Treat EDITOR as a command line, not a shell string.
         # This supports editors with flags (for example, "code --wait")
@@ -33,12 +34,12 @@ def open_plan_in_editor(plan_path: Path, console: Console) -> PlanSchema:
         try:
             return load_plan_draft(plan_path)
         except Exception as exc:
-            console.print(f"\n[bold red]Invalid plan file:[/bold red] {exc}")
-            if not Confirm.ask(
-                "[bold yellow]Open the editor again to fix the plan?[/bold yellow]",
-                default=True,
-                console=console,
-            ):
+            print(f"\nInvalid plan file: {exc}", file=sys.stderr)
+            try:
+                choice = input("Open the editor again to fix the plan? [Y/n] ")
+            except EOFError as input_exc:
+                raise RuntimeError("Plan editing was aborted.") from input_exc
+            if choice.strip().lower() not in {"", "y", "yes"}:
                 raise
 
 
@@ -55,7 +56,7 @@ def run_editing_plan_stage(
         payload=StateChangedPayload(),
     ))
     try:
-        runtime.approved_plan = open_plan_in_editor(runtime.plan_path, runtime.console)
+        runtime.approved_plan = open_plan_in_editor(runtime.plan_path)
     except Exception as exc:
         event_bus.publish(AgentEvent(
             name="run.failed",

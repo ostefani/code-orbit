@@ -1,5 +1,4 @@
-from rich.live import Live
-from rich.progress import Progress, SpinnerColumn, TextColumn
+from collections.abc import Callable
 
 from agent.config import Config
 from agent.events import (
@@ -168,7 +167,9 @@ def validate_llm_result(
 
 
 async def run_execution_stage(
-    runtime: WorkflowRuntime, event_bus: EventBus
+    runtime: WorkflowRuntime,
+    event_bus: EventBus,
+    on_chunk: Callable[[int, int, str], None] | None = None,
 ) -> WorkflowState:
     assert runtime.context_result is not None
     approved_plan = require_approved_plan(runtime)
@@ -184,51 +185,33 @@ async def run_execution_stage(
     runtime.task_summaries = []
     runtime.working_context = runtime.context_result.context
 
+    task_total = len(approved_plan.tasks)
     for index, task in enumerate(approved_plan.tasks, 1):
         event_bus.publish(AgentEvent(
             name="state.changed",
             state=WorkflowState.EXECUTING.value,
             message=(
                 f"Generating file replacements for task {index}/"
-                f"{len(approved_plan.tasks)}."
+                f"{task_total}."
             ),
             payload=StateChangedPayload(),
         ))
         try:
-            progress = Progress(
-                SpinnerColumn(style="bold magenta"),
-                TextColumn("{task.description}"),
-                transient=True,
-                console=runtime.console,
-            )
-            task_id = progress.add_task(
-                f"Coder is streaming task {index}/{len(approved_plan.tasks)}...",
-                total=None,
-            )
-            chunk_count = 0
+            def _task_chunk(
+                chunk: str,
+                _i: int = index,
+                _t: int = task_total,
+            ) -> None:
+                on_chunk(_i, _t, chunk)
 
-            # _i binds index by value; if tasks are ever parallelised,
-            # task_id and progress would also need default-argument binding.
-            def on_chunk(_chunk: str, _i: int = index) -> None:
-                nonlocal chunk_count
-                chunk_count += 1
-                progress.update(
-                    task_id,
-                    description=(
-                        f"Coder is streaming task {_i}/"
-                        f"{len(approved_plan.tasks)}... ({chunk_count} chunks)"
-                    ),
-                )
-
-            with Live(progress, console=runtime.console, refresh_per_second=12):
-                result = await call_coder_for_task(
-                    approved_plan,
-                    task,
-                    runtime.working_context,
-                    runtime.config,
-                    chat_adapter=runtime.chat_adapter,
-                    on_chunk=on_chunk,
-                )
+            result = await call_coder_for_task(
+                approved_plan,
+                task,
+                runtime.working_context,
+                runtime.config,
+                chat_adapter=runtime.chat_adapter,
+                on_chunk=_task_chunk if on_chunk is not None else None,
+            )
         except Exception as exc:
             return _handle_task_failure(runtime, event_bus, exc)
 
@@ -244,17 +227,6 @@ async def run_execution_stage(
             runtime.context_result.context,
             runtime.all_changes,
         )
-
-        if changes:
-            runtime.console.print(
-                f"[green]✓[/green] Task {index}/{len(approved_plan.tasks)}: "
-                f"{summary} ({len(changes)} file(s))"
-            )
-        else:
-            runtime.console.print(
-                f"[yellow]⚠[/yellow] Task {index}/{len(approved_plan.tasks)}: "
-                f"No changes required for '{task.goal}'"
-            )
 
     if not runtime.all_changes:
         event_bus.publish(AgentEvent(

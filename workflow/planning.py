@@ -1,10 +1,7 @@
+from collections.abc import Callable
 import os
 import tempfile
 from pathlib import Path
-
-from rich.live import Live
-from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from agent.events import AgentEvent, EmptyPayload, EventBus, PlanReadyPayload, StateChangedPayload
 from agent.llm import PlanSchema, call_architect
@@ -58,7 +55,9 @@ def format_plan_for_display(plan: PlanSchema) -> str:
 
 
 async def run_planning_stage(
-    runtime: WorkflowRuntime, event_bus: EventBus
+    runtime: WorkflowRuntime,
+    event_bus: EventBus,
+    on_chunk: Callable[[str], None] | None = None,
 ) -> WorkflowState:
     if runtime.context_result is None:
         raise RuntimeError(
@@ -74,31 +73,13 @@ async def run_planning_stage(
     ))
     prompt = build_architect_prompt(runtime.prompt, runtime.execution_feedback)
     try:
-        progress = Progress(
-            SpinnerColumn(style="bold magenta"),
-            TextColumn("{task.description}"),
-            transient=True,
-            console=runtime.console,
+        runtime.architect_plan = await call_architect(
+            prompt,
+            runtime.context_result.context,
+            runtime.config,
+            chat_adapter=runtime.chat_adapter,
+            on_chunk=on_chunk,
         )
-        task_id = progress.add_task("Architect is streaming response...", total=None)
-        chunk_count = 0
-
-        def on_plan_chunk(_chunk: str) -> None:
-            nonlocal chunk_count
-            chunk_count += 1
-            progress.update(
-                task_id,
-                description=f"Architect is streaming response... ({chunk_count} chunks)",
-            )
-
-        with Live(progress, console=runtime.console, refresh_per_second=12):
-            runtime.architect_plan = await call_architect(
-                prompt,
-                runtime.context_result.context,
-                runtime.config,
-                chat_adapter=runtime.chat_adapter,
-                on_chunk=on_plan_chunk,
-            )
     except Exception as exc:
         event_bus.publish(AgentEvent(
             name="run.failed",
@@ -122,13 +103,6 @@ async def run_planning_stage(
             draft_path=str(runtime.plan_path),
         ),
     ))
-    runtime.console.print(
-        Panel.fit(
-            format_plan_for_display(runtime.architect_plan),
-            title="🧭 plan",
-            border_style="cyan",
-        )
-    )
     reset_execution_state(runtime)
     runtime.execution_feedback = None
     if not runtime.architect_plan.tasks:
