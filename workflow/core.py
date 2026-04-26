@@ -46,7 +46,7 @@ async def run_workflow_core(
     on_plan_chunk: Callable[[str], None] | None = None,
     on_task_chunk: Callable[[int, int, str], None] | None = None,
 ) -> AgentRunResult:
-    target_path = request.target_dir
+    target_path = str(request.target_dir)
     config = config.model_copy(
         update={
             "auto_commit": config.auto_commit or request.auto_commit,
