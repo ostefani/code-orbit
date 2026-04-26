@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import json
 import logging
 import sys
@@ -7,10 +8,10 @@ from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Generic, TypeVar, Callable
+from typing import Callable, Generic, TypeVar, IO
 
 
-PayloadT = TypeVar("PayloadT", covariant=True)
+PayloadT = TypeVar("PayloadT")
 
 
 @dataclass(frozen=True)
@@ -174,8 +175,22 @@ class EventBus:
                 print(f"Subscriber error: {exc}\n{tb}", file=sys.stderr)
         return safe_event
 
-    def emit(self, name: str, payload: PayloadT, **kwargs) -> AgentEvent[PayloadT]:
-        event = AgentEvent(name=name, payload=payload, **kwargs)
+    def emit(
+        self,
+        name: str,
+        payload: PayloadT,
+        *,
+        level: str = "info",
+        state: str | None = None,
+        message: str | None = None,
+    ) -> AgentEvent[PayloadT]:
+        event = AgentEvent(
+            name=name,
+            payload=payload,
+            level=level,
+            state=state,
+            message=message,
+        )
         return self.publish(event)
 
 
@@ -211,33 +226,84 @@ class JsonEventFormatter(logging.Formatter):
 
 
 class LoggingEventSubscriber:
-    def __init__(self, logger: logging.Logger | None = None) -> None:
-        self._logger = logger or logging.getLogger("code_orbit.events")
+    def __init__(self, logger: logging.Logger) -> None:
+        self._logger = logger
 
     def __call__(self, event: AgentEvent[object]) -> None:
         level = getattr(logging, event.level.upper(), logging.INFO)
         self._logger.log(level, event.message or event.name, extra={"event": event})
 
 
-def build_event_logger() -> logging.Logger:
-    logger = logging.getLogger("code_orbit.events")
+class DeferredRotatingFileHandler(RotatingFileHandler):
+    def _open(self) -> IO[bytes]:
+        Path(self.baseFilename).parent.mkdir(parents=True, exist_ok=True)
+        return super()._open()
+
+
+def _resolve_log_dir(log_dir: Path | str | None) -> Path:
+    if log_dir is None:
+        return (Path.cwd() / ".code-orbit").resolve()
+    return Path(log_dir).expanduser().resolve()
+
+
+def _build_event_logger_name(log_dir: Path) -> str:
+    digest = hashlib.sha1(
+        str(log_dir).encode("utf-8"),
+        usedforsecurity=False,
+    ).hexdigest()[:12]
+    return f"code_orbit.events.{digest}"
+
+
+def build_event_log_handler(log_dir: Path) -> DeferredRotatingFileHandler:
+    handler = DeferredRotatingFileHandler(
+        log_dir / "trace.jsonl",
+        maxBytes=5 * 1024 * 1024,
+        backupCount=3,
+        encoding="utf-8",
+        delay=True,
+    )
+    handler.setFormatter(JsonEventFormatter())
+    return handler
+
+
+def _configure_event_logger(
+    logger: logging.Logger,
+    resolved_log_dir: Path,
+) -> logging.Logger:
+    existing_handlers = [
+        handler
+        for handler in logger.handlers
+        if isinstance(handler, DeferredRotatingFileHandler)
+    ]
+    if existing_handlers:
+        existing_paths = {
+            Path(handler.baseFilename).resolve()
+            for handler in existing_handlers
+            if handler.baseFilename
+        }
+        desired_path = (resolved_log_dir / "trace.jsonl").resolve()
+        if desired_path not in existing_paths:
+            raise ValueError(
+                "Event logger is already configured for a different log directory."
+            )
+        return logger
+
     logger.setLevel(logging.INFO)
     logger.propagate = False
-
-    if not any(
-        getattr(handler, "_code_orbit_events", False) for handler in logger.handlers
-    ):
-        log_dir = Path(".code-orbit")
-        log_dir.mkdir(exist_ok=True)
-
-        handler = RotatingFileHandler(
-            log_dir / "trace.jsonl",
-            maxBytes=5 * 1024 * 1024,
-            backupCount=3,
-            encoding="utf-8",
-        )
-        handler._code_orbit_events = True  # type: ignore[attr-defined]
-        handler.setFormatter(JsonEventFormatter())
-        logger.addHandler(handler)
+    logger.addHandler(build_event_log_handler(resolved_log_dir))
 
     return logger
+
+
+def configure_event_logger(
+    logger: logging.Logger,
+    log_dir: Path | str | None = None,
+) -> logging.Logger:
+    resolved_log_dir = _resolve_log_dir(log_dir)
+    return _configure_event_logger(logger, resolved_log_dir)
+
+
+def build_event_logger(log_dir: Path | str | None = None) -> logging.Logger:
+    resolved_log_dir = _resolve_log_dir(log_dir)
+    logger = logging.getLogger(_build_event_logger_name(resolved_log_dir))
+    return _configure_event_logger(logger, resolved_log_dir)

@@ -21,6 +21,12 @@ Config fields
                         (required for tokenizers_json backend)
   tokenizer_model       tiktoken model name, e.g. "gpt-4o"
                         (required for tiktoken backend; falls back to config.model)
+
+Public API
+──────────
+  count_tokens(text, config) -> TokenCountResult
+  count_tokens_int(text, config) -> int
+  TokenCounterFallbackWarning
 """
 
 from dataclasses import dataclass
@@ -28,6 +34,23 @@ from functools import lru_cache
 from pathlib import Path
 
 from .config import Config
+
+
+class TokenCounterFallbackWarning(UserWarning):
+    """Warning category for token-count fallbacks.
+
+    `count_tokens()` returns fallback warnings in `TokenCountResult.warnings`
+    without emitting Python warnings. Callers that want warning behavior can
+    emit `warnings.warn(...)` themselves, using this category if desired.
+    """
+
+
+__all__ = [
+    "TokenCountResult",
+    "TokenCounterFallbackWarning",
+    "count_tokens",
+    "count_tokens_int",
+]
 
 
 # ─────────────────────────────────────────────────────────────────────────────

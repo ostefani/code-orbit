@@ -1,5 +1,7 @@
-from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
+
+import pytest
+from pydantic import ValidationError
 
 from agent.config import Config
 
@@ -43,10 +45,15 @@ def test_config_defaults_include_embedding_settings() -> None:
     assert config.embedding_api_base.startswith("http://localhost:")
     assert config.embedding_batch_size == 16
     assert config.embedding_max_concurrency == 4
+    assert config.embedding_timeout_seconds == 60.0
     assert config.chat_model == "local"
     assert config.chat_api_base.startswith("http://localhost:")
     assert config.chat_context_window == 16384
     assert config.chat_streaming is True
+    assert config.max_content_bytes == 10_000_000
+    assert config.structured_llm_temperature == 0.2
+    assert config.structured_llm_retries == 1
+    assert config.structured_llm_retry_delay_seconds == 1.0
 
 
 def test_config_derives_chat_context_window_from_context_budget() -> None:
@@ -61,25 +68,53 @@ def test_config_preserves_explicit_chat_context_window() -> None:
     assert config.chat_context_window == 4096
 
 
+def test_config_allows_custom_structured_llm_temperature() -> None:
+    config = Config(structured_llm_temperature=0.7)
+
+    assert config.structured_llm_temperature == 0.7
+
+
+def test_config_allows_custom_structured_llm_retries() -> None:
+    config = Config(structured_llm_retries=3)
+
+    assert config.structured_llm_retries == 3
+
+
+def test_config_allows_custom_structured_llm_retry_delay() -> None:
+    config = Config(structured_llm_retry_delay_seconds=2.5)
+
+    assert config.structured_llm_retry_delay_seconds == 2.5
+
+
+def test_config_allows_custom_embedding_timeout() -> None:
+    config = Config(embedding_timeout_seconds=15.5)
+
+    assert config.embedding_timeout_seconds == 15.5
+
+
+def test_config_allows_disabling_embedding_timeout() -> None:
+    config = Config(embedding_timeout_seconds=None)
+
+    assert config.embedding_timeout_seconds is None
+
+
 def test_config_is_immutable_after_construction() -> None:
     config = Config()
 
-    try:
+    with pytest.raises(ValidationError):
         config.interactive = False
-    except FrozenInstanceError:
-        pass
-    else:
-        raise AssertionError("Expected Config to be frozen")
 
 
-def test_config_replace_preserves_original_instance() -> None:
+def test_config_validate_preserves_original_instance() -> None:
     base = Config(interactive=True, auto_commit=False, allow_delete=False)
 
-    overridden = replace(
-        base,
-        interactive=False,
-        auto_commit=True,
-        allow_delete=True,
+    overridden = Config.model_validate(
+        base.model_dump()
+        | {
+            "interactive": False,
+            "auto_commit": True,
+            "allow_delete": True,
+        }
     )
 
     assert base.interactive is True
@@ -88,3 +123,29 @@ def test_config_replace_preserves_original_instance() -> None:
     assert overridden.interactive is False
     assert overridden.auto_commit is True
     assert overridden.allow_delete is True
+
+
+def test_config_normalizes_relative_tokenizer_model_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    config = Config(tokenizer_model_path="models/tokenizer.json")
+
+    assert config.tokenizer_model_path == (tmp_path / "models" / "tokenizer.json")
+
+
+def test_load_with_diagnostics_normalizes_relative_tokenizer_model_path(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "tokenizer_model_path: models/tokenizer.json\n",
+        encoding="utf-8",
+    )
+
+    result = Config.load_with_diagnostics(config_path)
+
+    assert result.config.tokenizer_model_path == (
+        tmp_path / "models" / "tokenizer.json"
+    )

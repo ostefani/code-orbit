@@ -9,7 +9,6 @@ from agent.events import (
     EventBus,
     StateChangedPayload,
 )
-from agent.config import require_chat_context_window
 
 from ._state import WorkflowRuntime, WorkflowState
 
@@ -57,8 +56,6 @@ async def run_build_context_stage(
         if runtime.context_result.budget_breakdown is not None
         else runtime.config.chat_context_window
     )
-    if context_window is None:
-        context_window = require_chat_context_window(runtime.config)
 
     budget = runtime.context_result.budget_breakdown
     event_bus.publish(AgentEvent(

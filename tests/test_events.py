@@ -4,16 +4,19 @@ import logging
 from contextlib import redirect_stderr
 from io import StringIO
 from pathlib import Path
-from logging.handlers import RotatingFileHandler
+
+import pytest
 
 from agent.events import (
     AgentEvent,
     ApplyFilePayload,
     EmptyPayload,
     EventBus,
+    DeferredRotatingFileHandler,
     JsonEventFormatter,
     LoggingEventSubscriber,
     RunStartedPayload,
+    configure_event_logger,
     build_event_logger,
 )
 
@@ -163,29 +166,79 @@ def test_event_bus_deep_copies_mutable_payload() -> None:
 
 
 def test_build_event_logger_uses_rotating_file_handler(tmp_path: Path) -> None:
-    logger = logging.getLogger("code_orbit.events")
+    logger = build_event_logger(log_dir=tmp_path / "custom-logs")
+    other = build_event_logger(log_dir=tmp_path / "other-logs")
+
+    try:
+        log_dir = tmp_path / "custom-logs"
+        other_dir = tmp_path / "other-logs"
+
+        assert logger.name.startswith("code_orbit.events.")
+        assert other.name.startswith("code_orbit.events.")
+        assert other is not logger
+        assert other.name != logger.name
+        assert len(logger.handlers) == 1
+        assert len(other.handlers) == 1
+        handler = logger.handlers[0]
+        other_handler = other.handlers[0]
+        assert isinstance(handler, DeferredRotatingFileHandler)
+        assert isinstance(other_handler, DeferredRotatingFileHandler)
+        assert isinstance(handler.formatter, JsonEventFormatter)
+        assert isinstance(other_handler.formatter, JsonEventFormatter)
+        assert handler.maxBytes == 5 * 1024 * 1024
+        assert handler.backupCount == 3
+        assert not log_dir.exists()
+        assert not other_dir.exists()
+
+        logger.info(
+            "hello",
+            extra={
+                "event": AgentEvent(
+                    name="demo",
+                    payload=EmptyPayload(),
+                )
+            },
+        )
+        handler.flush()
+        assert log_dir.exists()
+        assert (log_dir / "trace.jsonl").exists()
+
+        other.info(
+            "hello",
+            extra={
+                "event": AgentEvent(
+                    name="demo.other",
+                    payload=EmptyPayload(),
+                )
+            },
+        )
+        other_handler.flush()
+        assert other_dir.exists()
+        assert (other_dir / "trace.jsonl").exists()
+    finally:
+        for handler in logger.handlers:
+            handler.close()
+        logger.handlers.clear()
+        for handler in other.handlers:
+            handler.close()
+        other.handlers.clear()
+        logging.Logger.manager.loggerDict.pop(logger.name, None)
+        logging.Logger.manager.loggerDict.pop(other.name, None)
+
+
+def test_configure_event_logger_rejects_reconfiguration(tmp_path: Path) -> None:
+    logger = logging.getLogger("test.code_orbit.events.reconfigure")
     prior_handlers = logger.handlers[:]
     logger.handlers.clear()
 
     try:
-        current_dir = Path.cwd()
-        try:
-            import os
+        configure_event_logger(logger, tmp_path / "one")
 
-            os.chdir(tmp_path)
-            configured = build_event_logger()
-        finally:
-            os.chdir(current_dir)
-
-        assert configured is logger
-        assert len(logger.handlers) == 1
-        handler = logger.handlers[0]
-        assert isinstance(handler, RotatingFileHandler)
-        assert handler.maxBytes == 5 * 1024 * 1024
-        assert handler.backupCount == 3
-        assert (tmp_path / ".code-orbit" / "trace.jsonl").parent.exists()
+        with pytest.raises(ValueError, match="different log directory"):
+            configure_event_logger(logger, tmp_path / "two")
     finally:
         for handler in logger.handlers:
             handler.close()
         logger.handlers.clear()
         logger.handlers.extend(prior_handlers)
+        logging.Logger.manager.loggerDict.pop(logger.name, None)

@@ -15,17 +15,51 @@ from .events import (
     GitCommitSucceededPayload,
     PreviewChangePayload,
 )
+from .config import Config
 from .schemas import CodeChangeSchema
 
 CodeChangeInput = CodeChangeSchema | dict[str, Any]
+_max_content_bytes_default = Config.model_fields["max_content_bytes"].default
+if not isinstance(_max_content_bytes_default, int):
+    raise RuntimeError("Config.max_content_bytes default must be an int.")
+DEFAULT_MAX_CONTENT_BYTES = _max_content_bytes_default
 
 
-def _safe_path(root: Path, rel_path: str) -> Path:
-    """Resolve rel_path under root, raising PermissionError if it escapes."""
-    resolved = (root / rel_path).resolve()
-    if not resolved.is_relative_to(root):  # Python 3.9+
-        raise PermissionError(f"Path traversal detected: {rel_path!r}")
-    return resolved
+def _publish_preview(event_bus: EventBus, payload: PreviewChangePayload) -> None:
+    event_bus.publish(
+        AgentEvent(
+            name="preview.change",
+            state="previewing",
+            payload=payload,
+        )
+    )
+
+
+def _resolve_path_under_root(resolved_root: Path, file_path: str) -> Path:
+    """Resolve a path under an already-resolved repository root."""
+    assert resolved_root.is_absolute(), "resolved_root must be an absolute Path."
+
+    resolved_candidate = (resolved_root / Path(file_path)).resolve()
+    if not resolved_candidate.is_relative_to(resolved_root):
+        raise PermissionError(
+            f"Path traversal detected: {file_path!r}"
+    )
+    return resolved_candidate
+
+
+def _relativize_resolved_path(resolved_root: Path, resolved_path: Path) -> str:
+    """Convert an already-resolved path under a resolved root to a relative path."""
+    assert resolved_root.is_absolute(), "resolved_root must be an absolute Path."
+    assert resolved_path.is_absolute(), "resolved_path must be an absolute Path."
+    return str(resolved_path.relative_to(resolved_root))
+
+
+def _relativize_path(resolved_root: Path, file_path: str) -> str:
+    """Convert a file path to a repo-relative path under a resolved root."""
+    return _relativize_resolved_path(
+        resolved_root,
+        _resolve_path_under_root(resolved_root, file_path),
+    )
 
 
 def _validate_changes(changes: list[CodeChangeInput]) -> list[CodeChangeSchema]:
@@ -55,61 +89,53 @@ def preview_changes(
     root_path = Path(root).resolve()
 
     for change in _validate_changes(changes):
-        path = _safe_path(root_path, change.path)
+        path = _resolve_path_under_root(root_path, change.path)
         action = change.action
 
         if action == "delete":
-            if event_bus:
-                event_bus.publish(AgentEvent(
-                    name="preview.change",
-                    state="previewing",
-                    payload=PreviewChangePayload(
-                        path=change.path,
-                        action=action,
-                        exists=path.exists(),
-                    ),
-                ))
+            _publish_preview(
+                event_bus,
+                PreviewChangePayload(
+                    path=change.path,
+                    action=action,
+                    exists=path.exists(),
+                ),
+            )
             continue
 
         if action == "create":
             content = change.content
-            if event_bus:
-                event_bus.publish(AgentEvent(
-                    name="preview.change",
-                    state="previewing",
-                    payload=PreviewChangePayload(
-                        path=change.path,
-                        action=action,
-                        content=content,
-                    ),
-                ))
+            _publish_preview(
+                event_bus,
+                PreviewChangePayload(
+                    path=change.path,
+                    action=action,
+                    content=content,
+                ),
+            )
             continue
 
         if action == "mkdir":
-            if event_bus:
-                event_bus.publish(AgentEvent(
-                    name="preview.change",
-                    state="previewing",
-                    payload=PreviewChangePayload(
-                        path=change.path,
-                        action=action,
-                        exists=path.exists(),
-                    ),
-                ))
+            _publish_preview(
+                event_bus,
+                PreviewChangePayload(
+                    path=change.path,
+                    action=action,
+                    exists=path.exists(),
+                ),
+            )
             continue
 
         if action in ("copy", "move"):
-            if event_bus:
-                event_bus.publish(AgentEvent(
-                    name="preview.change",
-                    state="previewing",
-                    payload=PreviewChangePayload(
-                        path=change.path,
-                        action=action,
-                        src=change.src,
-                        exists=path.exists(),
-                    ),
-                ))
+            _publish_preview(
+                event_bus,
+                PreviewChangePayload(
+                    path=change.path,
+                    action=action,
+                    src=change.src,
+                    exists=path.exists(),
+                ),
+            )
             continue
 
         # update
@@ -117,16 +143,14 @@ def preview_changes(
         if path.exists():
             old_content = path.read_text(encoding="utf-8")
             if old_content == new_content:
-                if event_bus:
-                    event_bus.publish(AgentEvent(
-                        name="preview.change",
-                        state="previewing",
-                        payload=PreviewChangePayload(
-                            path=change.path,
-                            action=action,
-                            unchanged=True,
-                        ),
-                    ))
+                _publish_preview(
+                    event_bus,
+                    PreviewChangePayload(
+                        path=change.path,
+                        action=action,
+                        unchanged=True,
+                    ),
+                )
                 continue
 
             old_lines = old_content.splitlines(keepends=True)
@@ -143,52 +167,45 @@ def preview_changes(
 
             diff_text = ""
             for line in diff:
-                if line.startswith("+") and not line.startswith("+++"):
-                    diff_text += f"[green]{line}[/green]\n"
-                elif line.startswith("-") and not line.startswith("---"):
-                    diff_text += f"[red]{line}[/red]\n"
-                elif line.startswith("@@"):
-                    diff_text += f"[cyan]{line}[/cyan]\n"
-                else:
-                    diff_text += f"{line}\n"
+                diff_text += f"{line}\n"
 
-            if event_bus:
-                event_bus.publish(AgentEvent(
-                    name="preview.change",
-                    state="previewing",
-                    payload=PreviewChangePayload(
-                        path=change.path,
-                        action=action,
-                        diff_text=diff_text.strip(),
-                    ),
-                ))
+            _publish_preview(
+                event_bus,
+                PreviewChangePayload(
+                    path=change.path,
+                    action=action,
+                    diff_text=diff_text.strip(),
+                ),
+            )
         else:
-            if event_bus:
-                event_bus.publish(AgentEvent(
-                    name="preview.change",
-                    state="previewing",
-                    payload=PreviewChangePayload(
-                        path=change.path,
-                        action=action,
-                        content=new_content,
-                        missing=True,
-                    ),
-                ))
+            _publish_preview(
+                event_bus,
+                PreviewChangePayload(
+                    path=change.path,
+                    action=action,
+                    content=new_content,
+                    missing=True,
+                ),
+            )
 
 
 def apply_changes(
     root: str,
     changes: list[CodeChangeInput],
     event_bus: EventBus | None = None,
+    config: Config | None = None,
 ) -> list[str]:
     """
     Apply all changes to disk. Returns list of affected file paths.
     """
     root_path = Path(root).resolve()
     affected = []
+    max_content_bytes = (
+        config.max_content_bytes if config is not None else DEFAULT_MAX_CONTENT_BYTES
+    )
 
     for change in _validate_changes(changes):
-        path = _safe_path(root_path, change.path)
+        path = _resolve_path_under_root(root_path, change.path)
         action = change.action
 
         if action == "delete":
@@ -207,11 +224,24 @@ def apply_changes(
                         performed=performed,
                     ),
                 ))
+            if performed:
+                affected.append(_relativize_resolved_path(root_path, path))
+            continue
 
         elif action in ("create", "update"):
             content = change.content
+            if content is None:
+                raise RuntimeError(
+                    f"Action {action!r} for {change.path!r} requires content."
+                )
+            encoded = content.encode("utf-8")
+            if len(encoded) > max_content_bytes:
+                raise ValueError(
+                    f"Content for {change.path!r} exceeds the "
+                    f"{max_content_bytes}-byte limit ({len(encoded)} bytes)."
+                )
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content, encoding="utf-8")
+            path.write_bytes(encoded)
             if event_bus:
                 event_bus.publish(AgentEvent(
                     name="apply.file",
@@ -240,7 +270,7 @@ def apply_changes(
             src = change.src
             if src is None:
                 raise ValueError(f"copy action for {change.path!r} is missing 'src'.")
-            src_path = _safe_path(root_path, src)
+            src_path = _resolve_path_under_root(root_path, src)
             path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src_path, path)
             if event_bus:
@@ -258,12 +288,12 @@ def apply_changes(
             src = change.src
             if src is None:
                 raise ValueError(f"move action for {change.path!r} is missing 'src'.")
-            src_path = _safe_path(root_path, src)
+            src_path = _resolve_path_under_root(root_path, src)
             path.parent.mkdir(parents=True, exist_ok=True)
             # shutil.move falls back to copy+delete on cross-device moves, so
             # this is not atomic across filesystems.
             shutil.move(str(src_path), str(path))
-            affected.append(str(src_path))
+            affected.append(_relativize_resolved_path(root_path, src_path))
             if event_bus:
                 event_bus.publish(AgentEvent(
                     name="apply.file",
@@ -275,7 +305,7 @@ def apply_changes(
                     ),
                 ))
 
-        affected.append(str(path))
+        affected.append(_relativize_resolved_path(root_path, path))
 
     return affected
 
@@ -287,11 +317,7 @@ def git_commit(
     root_path = Path(root).resolve()
     relative_files: list[str] = []
     for file_path in files:
-        candidate = Path(file_path)
-        if candidate.is_absolute():
-            relative_files.append(str(candidate.resolve().relative_to(root_path)))
-        else:
-            relative_files.append(str(candidate))
+        relative_files.append(_relativize_path(root_path, file_path))
 
     try:
         subprocess.run(
@@ -322,3 +348,4 @@ def git_commit(
                 message="Git commit failed.",
                 payload=GitCommitFailedPayload(stderr=e.stderr.decode()),
             ))
+        raise

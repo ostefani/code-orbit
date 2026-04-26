@@ -10,7 +10,7 @@ class CodeChangeSchema(BaseModel):
 
     path: str = Field(min_length=1)
     action: Literal["create", "update", "delete", "mkdir", "copy", "move"]
-    content: str | None = None
+    content: str | None = Field(default=None, strict=True)
     src: str | None = None
 
     @model_validator(mode="after")
