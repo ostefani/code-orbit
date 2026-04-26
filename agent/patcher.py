@@ -3,9 +3,6 @@ import difflib
 import shutil
 
 from pathlib import Path
-from typing import Any
-
-from pydantic import ValidationError
 
 from .events import (
     AgentEvent,
@@ -18,7 +15,6 @@ from .events import (
 from .config import Config
 from .schemas import CodeChangeSchema
 
-CodeChangeInput = CodeChangeSchema | dict[str, Any]
 _max_content_bytes_default = Config.model_fields["max_content_bytes"].default
 if not isinstance(_max_content_bytes_default, int):
     raise RuntimeError("Config.max_content_bytes default must be an int.")
@@ -62,24 +58,9 @@ def _relativize_path(resolved_root: Path, file_path: str) -> str:
     )
 
 
-def _validate_changes(changes: list[CodeChangeInput]) -> list[CodeChangeSchema]:
-    validated: list[CodeChangeSchema] = []
-    for index, change in enumerate(changes, 1):
-        if isinstance(change, CodeChangeSchema):
-            validated.append(change)
-            continue
-
-        try:
-            validated.append(CodeChangeSchema.model_validate(change))
-        except ValidationError as exc:
-            message = exc.errors()[0]["msg"]
-            raise ValueError(f"Invalid change #{index}: {message}") from exc
-    return validated
-
-
 def preview_changes(
     root: str,
-    changes: list[CodeChangeInput],
+    changes: list[CodeChangeSchema],
     event_bus: EventBus | None = None,
 ) -> None:
     """Emit preview events for each change."""
@@ -88,7 +69,7 @@ def preview_changes(
 
     root_path = Path(root).resolve()
 
-    for change in _validate_changes(changes):
+    for change in changes:
         path = _resolve_path_under_root(root_path, change.path)
         action = change.action
 
@@ -191,7 +172,7 @@ def preview_changes(
 
 def apply_changes(
     root: str,
-    changes: list[CodeChangeInput],
+    changes: list[CodeChangeSchema],
     event_bus: EventBus | None = None,
     config: Config | None = None,
 ) -> list[str]:
@@ -204,7 +185,7 @@ def apply_changes(
         config.max_content_bytes if config is not None else DEFAULT_MAX_CONTENT_BYTES
     )
 
-    for change in _validate_changes(changes):
+    for change in changes:
         path = _resolve_path_under_root(root_path, change.path)
         action = change.action
 

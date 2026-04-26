@@ -15,7 +15,13 @@ def temp_project(tmp_path):
 
 
 def test_apply_create(temp_project):
-    changes = [{"path": "new.py", "action": "create", "content": "print('new')"}]
+    changes = [
+        CodeChangeSchema(
+            path="new.py",
+            action="create",
+            content="print('new')",
+        )
+    ]
     affected = apply_changes(str(temp_project), changes)
 
     assert "new.py" in affected
@@ -44,12 +50,24 @@ def test_apply_create_respects_max_content_bytes_boundary(temp_project):
 
     under_affected = apply_changes(
         str(temp_project),
-        [{"path": "under.txt", "action": "create", "content": under_limit}],
+        [
+            CodeChangeSchema(
+                path="under.txt",
+                action="create",
+                content=under_limit,
+            )
+        ],
         config=config,
     )
     exact_affected = apply_changes(
         str(temp_project),
-        [{"path": "exact.txt", "action": "create", "content": exact_limit}],
+        [
+            CodeChangeSchema(
+                path="exact.txt",
+                action="create",
+                content=exact_limit,
+            )
+        ],
         config=config,
     )
 
@@ -106,7 +124,11 @@ def test_preview_update_diff_text_is_plain(temp_project):
 
 def test_apply_update(temp_project):
     changes = [
-        {"path": "existing.py", "action": "update", "content": "print('updated')"}
+        CodeChangeSchema(
+            path="existing.py",
+            action="update",
+            content="print('updated')",
+        )
     ]
     affected = apply_changes(str(temp_project), changes)
 
@@ -116,7 +138,13 @@ def test_apply_update(temp_project):
 
 def test_apply_update_rejects_content_over_max_content_bytes(temp_project):
     content = "a" * 6
-    changes = [{"path": "existing.py", "action": "update", "content": content}]
+    changes = [
+        CodeChangeSchema(
+            path="existing.py",
+            action="update",
+            content=content,
+        )
+    ]
     config = Config(max_content_bytes=5)
 
     with pytest.raises(
@@ -132,15 +160,8 @@ def test_apply_update_rejects_content_over_max_content_bytes(temp_project):
     assert (temp_project / "existing.py").read_text() == "print('old')"
 
 
-def test_apply_create_rejects_non_string_content(temp_project):
-    changes = [{"path": "bad.txt", "action": "create", "content": 123}]
-
-    with pytest.raises(ValueError, match="Input should be a valid string"):
-        apply_changes(str(temp_project), changes)
-
-
 def test_apply_delete(temp_project):
-    changes = [{"path": "existing.py", "action": "delete"}]
+    changes = [CodeChangeSchema(path="existing.py", action="delete")]
     affected = apply_changes(str(temp_project), changes)
 
     assert "existing.py" in affected
@@ -148,14 +169,14 @@ def test_apply_delete(temp_project):
 
 
 def test_apply_delete_missing_file_does_not_append_affected(temp_project):
-    changes = [{"path": "missing.py", "action": "delete"}]
+    changes = [CodeChangeSchema(path="missing.py", action="delete")]
     affected = apply_changes(str(temp_project), changes)
 
     assert affected == []
 
 
 def test_apply_mkdir(temp_project):
-    changes = [{"path": "subdir/deep", "action": "mkdir"}]
+    changes = [CodeChangeSchema(path="subdir/deep", action="mkdir")]
     affected = apply_changes(str(temp_project), changes)
 
     assert str(Path("subdir") / "deep") in affected
@@ -163,22 +184,27 @@ def test_apply_mkdir(temp_project):
 
 
 def test_apply_copy(temp_project):
-    changes = [{"path": "copied.py", "action": "copy", "src": "existing.py"}]
+    changes = [
+        CodeChangeSchema(
+            path="copied.py",
+            action="copy",
+            src="existing.py",
+        )
+    ]
     affected = apply_changes(str(temp_project), changes)
 
     assert "copied.py" in affected
     assert (temp_project / "copied.py").read_text() == "print('old')"
 
 
-def test_apply_copy_requires_src(temp_project):
-    changes = [{"path": "copied.py", "action": "copy"}]
-
-    with pytest.raises(ValueError, match="Invalid change #1.*requires field 'src'"):
-        apply_changes(str(temp_project), changes)
-
-
 def test_apply_move_includes_source_and_destination(temp_project):
-    changes = [{"path": "moved.py", "action": "move", "src": "existing.py"}]
+    changes = [
+        CodeChangeSchema(
+            path="moved.py",
+            action="move",
+            src="existing.py",
+        )
+    ]
     affected = apply_changes(str(temp_project), changes)
 
     assert "existing.py" in affected
@@ -187,22 +213,14 @@ def test_apply_move_includes_source_and_destination(temp_project):
     assert (temp_project / "moved.py").read_text() == "print('old')"
 
 
-def test_apply_move_requires_src(temp_project):
-    changes = [{"path": "moved.py", "action": "move"}]
-
-    with pytest.raises(ValueError, match="Invalid change #1.*requires field 'src'"):
-        apply_changes(str(temp_project), changes)
-
-
-def test_apply_rejects_malformed_change_without_key_error(temp_project):
-    with pytest.raises(ValueError, match="Invalid change #1"):
-        apply_changes(str(temp_project), [{"action": "create", "content": "x"}])
-
-    assert not (temp_project / "x").exists()
-
-
 def test_apply_changes_emits_events(temp_project):
-    changes = [{"path": "new.py", "action": "create", "content": "print('new')"}]
+    changes = [
+        CodeChangeSchema(
+            path="new.py",
+            action="create",
+            content="print('new')",
+        )
+    ]
     bus = EventBus()
     events = []
     bus.subscribe(events.append)
