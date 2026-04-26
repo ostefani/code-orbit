@@ -1,4 +1,3 @@
-from dataclasses import replace
 from pathlib import Path
 
 from rich.console import Console
@@ -79,11 +78,12 @@ async def run_workflow(
             payload=ConfigMessagePayload(text=message.text),
         ))
 
-    config = replace(
-        config,
-        interactive=config.interactive and not no_interactive,
-        auto_commit=config.auto_commit or auto_commit,
-        allow_delete=config.allow_delete or allow_delete,
+    config = config.model_copy(
+        update={
+            "interactive": config.interactive and not no_interactive,
+            "auto_commit": config.auto_commit or auto_commit,
+            "allow_delete": config.allow_delete or allow_delete,
+        }
     )
 
     event_bus.publish(AgentEvent(
