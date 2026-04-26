@@ -38,6 +38,10 @@ class EmbeddingSyncResult:
     failed_files: tuple[str, ...] = ()
     timed_out_files: tuple[str, ...] = ()
 
+    @property
+    def all_failed_files(self) -> tuple[str, ...]:
+        return tuple(sorted(set(self.failed_files) | set(self.timed_out_files)))
+
 
 async def build_embedding_index(
     root: str | Path,

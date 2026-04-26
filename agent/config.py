@@ -173,7 +173,7 @@ class Config(BaseModel):
             and self.embedding_timeout_seconds <= 0
         ):
             raise ValueError(
-                "embedding_timeout_seconds must be greater than zero or null."
+                "embedding_timeout_seconds must be greater than zero, or null to disable."
             )
         if self.chat_context_window <= 0:
             raise ValueError("chat_context_window must be greater than zero.")

@@ -320,28 +320,40 @@ async def build_context_async(
         await semantic_client.validate()
 
     try:
-        try:
-            embedding_result: EmbeddingSyncResult = await build_embedding_index(
-                root_path,
-                config,
-                cache_path=cache_path or default_embedding_cache_path(root_path),
-                client=semantic_client,
-                batch_size=config.embedding_batch_size,
+        embedding_result: EmbeddingSyncResult = await build_embedding_index(
+            root_path,
+            config,
+            cache_path=cache_path or default_embedding_cache_path(root_path),
+            client=semantic_client,
+            batch_size=config.embedding_batch_size,
+        )
+    except Exception as exc:
+        if event_bus is not None:
+            event_bus.emit(
+                "context.warning",
+                ContextWarningPayload(
+                    warning=f"Semantic ranking unavailable: {exc}"
+                ),
+                level="warning",
+                state="building_context",
+                message="Semantic ranking unavailable.",
             )
-            if embedding_result.timed_out_files and event_bus is not None:
-                timed_out = ", ".join(embedding_result.timed_out_files)
-                event_bus.emit(
-                    "context.warning",
-                    ContextWarningPayload(
-                        warning=(
-                            "Semantic ranking was partially updated because "
-                            f"embedding timed out for: {timed_out}"
-                        )
-                    ),
-                    level="warning",
-                    state="building_context",
-                    message="Semantic ranking partially updated after embedding timeout.",
-                )
+    else:
+        if embedding_result.timed_out_files and event_bus is not None:
+            timed_out = ", ".join(embedding_result.timed_out_files)
+            event_bus.emit(
+                "context.warning",
+                ContextWarningPayload(
+                    warning=(
+                        "Semantic ranking was partially updated because "
+                        f"embedding timed out for: {timed_out}"
+                    )
+                ),
+                level="warning",
+                state="building_context",
+                message="Semantic ranking partially updated after embedding timeout.",
+            )
+        try:
             prompt_vector = (
                 await asyncio.wait_for(
                     semantic_client.embed([prompt]),
