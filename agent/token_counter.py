@@ -23,7 +23,6 @@ Config fields
                         (required for tiktoken backend; falls back to config.model)
 """
 
-import warnings
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -32,10 +31,11 @@ from .config import Config
 
 
 class TokenCounterFallbackWarning(UserWarning):
-    """Warning emitted when token counting falls back to estimation.
+    """Warning category for token-count fallbacks.
 
-    Callers that want once-per-message suppression can opt in with
-    `warnings.filterwarnings("once", category=TokenCounterFallbackWarning)`.
+    `count_tokens()` returns fallback warnings in `TokenCountResult.warnings`
+    without emitting Python warnings. Callers that want warning behavior can
+    emit `warnings.warn(...)` themselves, using this category if desired.
     """
 
 
@@ -131,7 +131,7 @@ def count_tokens(text: str, config: Config) -> TokenCountResult:
 
         if model_path is None:
             estimate = _estimate(text)
-            result = TokenCountResult(
+            return TokenCountResult(
                 count=estimate.count,
                 tokenizer_name=estimate.tokenizer_name,
                 warnings=(
@@ -139,50 +139,29 @@ def count_tokens(text: str, config: Config) -> TokenCountResult:
                     "tokenizer_model_path in config. Falling back to estimate.",
                 ),
             )
-            for warning in result.warnings:
-                warnings.warn(
-                    warning,
-                    TokenCounterFallbackWarning,
-                    stacklevel=2,
-                )
-            return result
 
         resolved = model_path.expanduser().resolve()
         if not resolved.exists():
             estimate = _estimate(text)
-            result = TokenCountResult(
+            return TokenCountResult(
                 count=estimate.count,
                 tokenizer_name=estimate.tokenizer_name,
                 warnings=(
                     f"tokenizer.json not found at '{resolved}'. Falling back to estimate.",
                 ),
             )
-            for warning in result.warnings:
-                warnings.warn(
-                    warning,
-                    TokenCounterFallbackWarning,
-                    stacklevel=2,
-                )
-            return result
 
         try:
             return _count_tokenizers_json(text, str(resolved))
         except Exception as exc:
             estimate = _estimate(text)
-            result = TokenCountResult(
+            return TokenCountResult(
                 count=estimate.count,
                 tokenizer_name=estimate.tokenizer_name,
                 warnings=(
                     f"tokenizers_json counting failed: {exc}. Falling back to estimate.",
                 ),
             )
-            for warning in result.warnings:
-                warnings.warn(
-                    warning,
-                    TokenCounterFallbackWarning,
-                    stacklevel=2,
-                )
-            return result
 
     # ── tiktoken (OpenAI-family) ──────────────────────────────────────────────
     if backend == "tiktoken":
@@ -191,7 +170,7 @@ def count_tokens(text: str, config: Config) -> TokenCountResult:
             return _count_tiktoken(text, model_name)
         except Exception as exc:
             estimate = _estimate(text)
-            result = TokenCountResult(
+            return TokenCountResult(
                 count=estimate.count,
                 tokenizer_name=estimate.tokenizer_name,
                 warnings=(
@@ -199,13 +178,6 @@ def count_tokens(text: str, config: Config) -> TokenCountResult:
                     "Falling back to estimate.",
                 ),
             )
-            for warning in result.warnings:
-                warnings.warn(
-                    warning,
-                    TokenCounterFallbackWarning,
-                    stacklevel=2,
-                )
-            return result
 
     # ── estimate (default / explicit) ─────────────────────────────────────────
     return _estimate(text)
