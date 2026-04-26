@@ -23,7 +23,7 @@ Config fields
                         (required for tiktoken backend; falls back to config.model)
 """
 
-import logging
+import warnings
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -31,19 +31,12 @@ from pathlib import Path
 from .config import Config
 
 
-_logger = logging.getLogger(__name__)
-_warned: set[str] = set()
+class TokenCounterFallbackWarning(UserWarning):
+    """Warning emitted when token counting falls back to estimation.
 
-
-def _warn_once(msg: str) -> None:
-    if msg not in _warned:
-        _warned.add(msg)
-        _logger.warning(msg)
-
-
-def _log_warnings(result: "TokenCountResult") -> None:
-    for warning in result.warnings:
-        _warn_once(warning)
+    Callers that want once-per-message suppression can opt in with
+    `warnings.filterwarnings("once", category=TokenCounterFallbackWarning)`.
+    """
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -146,7 +139,12 @@ def count_tokens(text: str, config: Config) -> TokenCountResult:
                     "tokenizer_model_path in config. Falling back to estimate.",
                 ),
             )
-            _log_warnings(result)
+            for warning in result.warnings:
+                warnings.warn(
+                    warning,
+                    TokenCounterFallbackWarning,
+                    stacklevel=2,
+                )
             return result
 
         resolved = model_path.expanduser().resolve()
@@ -159,7 +157,12 @@ def count_tokens(text: str, config: Config) -> TokenCountResult:
                     f"tokenizer.json not found at '{resolved}'. Falling back to estimate.",
                 ),
             )
-            _log_warnings(result)
+            for warning in result.warnings:
+                warnings.warn(
+                    warning,
+                    TokenCounterFallbackWarning,
+                    stacklevel=2,
+                )
             return result
 
         try:
@@ -173,7 +176,12 @@ def count_tokens(text: str, config: Config) -> TokenCountResult:
                     f"tokenizers_json counting failed: {exc}. Falling back to estimate.",
                 ),
             )
-            _log_warnings(result)
+            for warning in result.warnings:
+                warnings.warn(
+                    warning,
+                    TokenCounterFallbackWarning,
+                    stacklevel=2,
+                )
             return result
 
     # ── tiktoken (OpenAI-family) ──────────────────────────────────────────────
@@ -191,7 +199,12 @@ def count_tokens(text: str, config: Config) -> TokenCountResult:
                     "Falling back to estimate.",
                 ),
             )
-            _log_warnings(result)
+            for warning in result.warnings:
+                warnings.warn(
+                    warning,
+                    TokenCounterFallbackWarning,
+                    stacklevel=2,
+                )
             return result
 
     # ── estimate (default / explicit) ─────────────────────────────────────────
