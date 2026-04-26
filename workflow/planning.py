@@ -33,27 +33,6 @@ def load_plan_draft(plan_path: Path) -> PlanSchema:
     return PlanSchema.model_validate_json(plan_path.read_text(encoding="utf-8"))
 
 
-def format_plan_for_display(plan: PlanSchema) -> str:
-    lines = [f"[bold]{plan.summary}[/bold]"]
-    if not plan.tasks:
-        if plan.answer:
-            lines.append("")
-            lines.append(plan.answer)
-        else:
-            lines.append("[dim]No implementation tasks were proposed.[/dim]")
-        return "\n".join(lines)
-
-    lines.append("")
-    for index, task in enumerate(plan.tasks, 1):
-        files = ", ".join(task.files)
-        lines.append(f"[bold cyan]{index}. {task.goal}[/bold cyan]")
-        lines.append(f"[dim]Files:[/dim] {files}")
-        lines.append(f"[dim]Reason:[/dim] {task.reasoning}")
-        if index < len(plan.tasks):
-            lines.append("")
-    return "\n".join(lines)
-
-
 async def run_planning_stage(
     runtime: WorkflowRuntime,
     event_bus: EventBus,
