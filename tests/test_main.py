@@ -274,12 +274,35 @@ def test_run_workflow_tree_mode_does_not_call_core(
     monkeypatch, tmp_path: Path
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    published_events = []
+
+    class FakeEventBus:
+        def __init__(self) -> None:
+            self.subscribers = []
+
+        def subscribe(self, subscriber) -> None:
+            self.subscribers.append(subscriber)
+
+        def publish(self, event):
+            published_events.append(event)
+            return event
+
+        def emit(self, *args, **kwargs):
+            raise AssertionError("tree mode should not emit extra events")
 
     async def fake_run_workflow_core(*_args, **_kwargs):
         raise AssertionError("tree mode should not run workflow core")
 
+    monkeypatch.setattr("workflow.EventBus", FakeEventBus)
     monkeypatch.setattr("workflow.run_workflow_core", fake_run_workflow_core)
     monkeypatch.setattr("agent.context.get_file_tree", lambda *_args, **_kwargs: "tree")
+    monkeypatch.setattr(
+        "workflow.Config.load_with_diagnostics",
+        lambda *args, **kwargs: SimpleNamespace(
+            config=Config(interactive=True),
+            messages=(),
+        ),
+    )
 
     asyncio.run(
         run_workflow(
@@ -289,6 +312,8 @@ def test_run_workflow_tree_mode_does_not_call_core(
             console=Console(file=StringIO()),
         )
     )
+
+    assert [event.name for event in published_events] == ["run.started"]
 
 
 def test_main_reports_unexpected_errors(monkeypatch, tmp_path: Path, capsys) -> None:

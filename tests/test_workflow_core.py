@@ -170,7 +170,7 @@ def test_run_workflow_core_returns_completed_result(monkeypatch) -> None:
     assert result.run_id == request.run_id
     assert result.summary == "Ship it"
     assert result.affected_files == ["src/app.py"]
-    assert [event.name for event in events] == ["run.started", "run.completed"]
+    assert [event.name for event in events] == ["run.completed"]
 
 
 def test_run_execution_stage_emits_one_state_change_per_task(monkeypatch, tmp_path) -> None:
@@ -321,7 +321,7 @@ def test_run_workflow_core_returns_answered_result(monkeypatch) -> None:
     assert result.summary == "Explanation"
     assert result.answer == "This code does the thing."
     assert result.affected_files == []
-    assert [event.name for event in events] == ["run.started", "run.completed"]
+    assert [event.name for event in events] == ["run.completed"]
 
 
 def test_run_workflow_core_returns_failed_result(monkeypatch) -> None:
@@ -430,7 +430,7 @@ def test_run_workflow_core_returns_failed_result_for_stage_exception(monkeypatch
     assert adapter.closed is True
     assert result.status is AgentRunStatus.FAILED
     assert result.error == "context exploded"
-    assert [event.name for event in events] == ["run.started", "run.failed"]
+    assert [event.name for event in events] == ["run.failed"]
 
 
 def test_run_workflow_core_cleans_up_plan_path(monkeypatch, tmp_path) -> None:

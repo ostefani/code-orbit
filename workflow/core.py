@@ -8,7 +8,6 @@ from agent.events import (
     EmptyPayload,
     EventBus,
     RunCompletedPayload,
-    RunStartedPayload,
 )
 from api import AgentRunRequest, AgentRunResult, AgentRunStatus
 
@@ -53,13 +52,6 @@ async def run_workflow_core(
             "allow_delete": config.allow_delete or request.allow_delete,
         }
     )
-
-    event_bus.publish(AgentEvent(
-        name="run.started",
-        state="starting",
-        message="Agent run started.",
-        payload=RunStartedPayload(target_dir=target_path, model=config.chat_model),
-    ))
 
     runtime = WorkflowRuntime(
         target_dir=target_path,

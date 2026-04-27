@@ -11,6 +11,7 @@ from agent.events import (
     EmptyPayload,
     EventBus,
     LoggingEventSubscriber,
+    RunStartedPayload,
     StateChangedPayload,
     build_event_logger,
 )
@@ -243,6 +244,15 @@ async def run_workflow(
         update={
             "interactive": config.interactive and not no_interactive,
         }
+    )
+
+    event_bus.publish(
+        AgentEvent(
+            name="run.started",
+            state="starting",
+            message="Agent run started.",
+            payload=RunStartedPayload(target_dir=target_path, model=config.chat_model),
+        )
     )
 
     console_obj.print(
