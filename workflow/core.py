@@ -132,10 +132,14 @@ async def run_workflow_core(
                 ))
                 return result
 
+            summary = runtime.final_summary
+            if summary is None and approved_plan is not None:
+                summary = approved_plan.summary
+
             result = AgentRunResult(
                 request=request,
                 status=AgentRunStatus.COMPLETED,
-                summary=runtime.final_summary or "",
+                summary=summary or "",
                 affected_files=runtime.affected_files,
                 completed_at=_terminal_time(),
             )

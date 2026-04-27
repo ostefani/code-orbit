@@ -237,6 +237,50 @@ def test_run_execution_stage_emits_one_state_change_per_task(monkeypatch, tmp_pa
     assert [event.payload.change_count for event in task_completed_events] == [1, 1]
 
 
+def test_run_workflow_core_uses_plan_summary_when_execution_has_no_changes(
+    monkeypatch,
+) -> None:
+    request = AgentRunRequest(target_dir="/tmp/project", prompt="Make it so")
+    adapter = _DummyAdapter()
+
+    async def fake_create_chat_adapter(_config):
+        return adapter
+
+    async def fake_build_context(runtime, _event_bus):
+        runtime.context_result = SimpleNamespace(context="context")
+        return WorkflowState.PLANNING
+
+    async def fake_plan(runtime, _event_bus, on_chunk=None):
+        runtime.approved_plan = SimpleNamespace(
+            summary="Keep it as-is",
+            tasks=[SimpleNamespace(goal="Task", files=["src/app.py"], reasoning="why")],
+        )
+        return WorkflowState.EXECUTING
+
+    async def fake_execution(runtime, _event_bus, on_chunk=None):
+        runtime.affected_files = []
+        runtime.final_summary = None
+        return WorkflowState.COMPLETED
+
+    monkeypatch.setattr("workflow.core.create_chat_adapter", fake_create_chat_adapter)
+    monkeypatch.setattr("workflow.core.run_build_context_stage", fake_build_context)
+    monkeypatch.setattr("workflow.core.run_planning_stage", fake_plan)
+    monkeypatch.setattr("workflow.core.run_execution_stage", fake_execution)
+
+    result = asyncio.run(
+        run_workflow_core(
+            request,
+            config=Config(interactive=False),
+            event_bus=EventBus(),
+        )
+    )
+
+    assert adapter.closed is True
+    assert result.status is AgentRunStatus.COMPLETED
+    assert result.summary == "Keep it as-is"
+    assert result.affected_files == []
+
+
 def test_run_workflow_core_returns_answered_result(monkeypatch) -> None:
     request = AgentRunRequest(target_dir="/tmp/project", prompt="Explain this")
     bus = EventBus()
