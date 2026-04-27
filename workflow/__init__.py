@@ -82,6 +82,7 @@ async def run_workflow(
     @dataclass
     class _ProgressState:
         live: Live | None = None
+        context_task_id: TaskID | None = None
         plan_task_id: TaskID | None = None
         plan_chunk_count: int = 0
         task_task_ids: dict[int, TaskID] = field(default_factory=dict)
@@ -109,6 +110,11 @@ async def run_workflow(
             progress_state.plan_task_id = None
         progress_state.plan_chunk_count = 0
 
+    def _remove_context_task() -> None:
+        if progress_state.context_task_id is not None:
+            progress.remove_task(progress_state.context_task_id)
+            progress_state.context_task_id = None
+
     def _remove_task_tasks() -> None:
         for task_id in progress_state.task_task_ids.values():
             progress.remove_task(task_id)
@@ -116,6 +122,14 @@ async def run_workflow(
         progress_state.task_chunk_counts.clear()
 
     def progress_subscriber(event: AgentEvent[object]) -> None:
+        if event.name in {"context.summary", "run.completed", "run.failed"}:
+            stop_live()
+            _remove_context_task()
+            if event.name != "context.summary":
+                _remove_plan_task()
+                _remove_task_tasks()
+            return
+
         if event.name == "plan.ready":
             stop_live()
             _remove_plan_task()
@@ -131,16 +145,17 @@ async def run_workflow(
             _remove_task_tasks()
             return
 
-        if event.name in {"run.completed", "run.failed"}:
-            stop_live()
-            _remove_plan_task()
-            _remove_task_tasks()
-            return
-
         if event.name != "state.changed":
             return
 
-        if event.state == "planning":
+        if event.state == "building_context":
+            _remove_context_task()
+            progress_state.context_task_id = progress.add_task(
+                "Analyzing codebase...",
+                total=None,
+            )
+            start_live()
+        elif event.state == "planning":
             _remove_plan_task()
             progress_state.plan_task_id = progress.add_task(
                 "Architect is streaming response...",
@@ -172,6 +187,7 @@ async def run_workflow(
             "committing",
         }:
             stop_live()
+            _remove_context_task()
             _remove_plan_task()
             _remove_task_tasks()
 

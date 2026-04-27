@@ -1,6 +1,7 @@
 from agent.events import AgentEvent, EventBus, StateChangedPayload
 from agent.llm import format_plan_roadmap
 from agent.patcher import apply_changes, git_commit, preview_changes
+from rich.prompt import Confirm
 
 from ._state import (
     WorkflowRuntime,
@@ -31,10 +32,10 @@ def run_review_diff_stage(
             payload=StateChangedPayload(),
         ))
         try:
-            choice = input("Apply these changes? [Y/n] ")
+            choice = Confirm.ask("Apply these changes?", default=True)
         except EOFError:
-            choice = "n"
-        if choice.strip().lower() not in {"", "y", "yes"}:
+            choice = False
+        if not choice:
             reset_execution_state(runtime)
             return WorkflowState.EDITING_PLAN
 

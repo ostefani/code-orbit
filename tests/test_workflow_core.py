@@ -7,8 +7,10 @@ from agent.events import EventBus
 from agent.schemas import CodeChangeSchema
 from api import AgentRunRequest, AgentRunStatus
 from workflow.core import run_workflow_core
+from workflow.context import run_build_context_stage
 from workflow.editing import run_editing_plan_stage
 from workflow.execution import run_execution_stage
+from workflow.output import run_review_diff_stage
 from workflow.planning import run_planning_stage
 from workflow._state import WorkflowRuntime, WorkflowState
 
@@ -73,6 +75,45 @@ def test_run_planning_stage_approves_direct_answer_plan(monkeypatch, tmp_path) -
     assert state is WorkflowState.COMPLETED
     assert runtime.architect_plan is plan
     assert runtime.approved_plan is plan
+
+
+def test_run_build_context_stage_emits_building_context_state(monkeypatch, tmp_path) -> None:
+    runtime = WorkflowRuntime(
+        target_dir=str(tmp_path),
+        prompt="Make it so",
+        config=Config(interactive=False),
+    )
+    events = []
+    bus = EventBus()
+    bus.subscribe(events.append)
+
+    fake_context_result = SimpleNamespace(
+        context="context",
+        token_warnings=[],
+        skipped_paths=[],
+        budget_breakdown=None,
+        entries=[SimpleNamespace()],
+        used_tokens=12,
+        token_budget=34,
+        semantic_matches=[],
+    )
+
+    async def fake_build_context_async(*_args, **_kwargs):
+        return fake_context_result
+
+    monkeypatch.setattr(
+        "workflow.context.build_context_async",
+        fake_build_context_async,
+    )
+
+    state = asyncio.run(run_build_context_stage(runtime, bus))
+
+    assert state is WorkflowState.PLANNING
+    assert runtime.context_result is fake_context_result
+    assert runtime.working_context == "context"
+    assert [event.state for event in events if event.name == "state.changed"] == [
+        "building_context"
+    ]
 
 
 def test_run_workflow_core_returns_completed_result(monkeypatch) -> None:
@@ -235,6 +276,54 @@ def test_run_execution_stage_emits_one_state_change_per_task(monkeypatch, tmp_pa
         "Done Task 2",
     ]
     assert [event.payload.change_count for event in task_completed_events] == [1, 1]
+
+
+def test_run_review_diff_stage_uses_rich_confirm_prompt(monkeypatch, tmp_path) -> None:
+    runtime = WorkflowRuntime(
+        target_dir=str(tmp_path),
+        prompt="Make it so",
+        config=Config(interactive=True),
+        approved_plan=SimpleNamespace(summary="Ship it", tasks=[]),
+    )
+    runtime.all_changes = [CodeChangeSchema(path="src/app.py", action="update", content="x")]
+    events = []
+    bus = EventBus()
+    bus.subscribe(events.append)
+
+    monkeypatch.setattr("workflow.output.preview_changes", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("workflow.output.Confirm.ask", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        "builtins.input",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("input() must not be used")),
+    )
+
+    state = run_review_diff_stage(runtime, bus)
+
+    assert state is WorkflowState.EDITING_PLAN
+    assert runtime.all_changes == []
+    assert runtime.task_summaries == []
+    assert runtime.final_summary == ""
+    assert [event.state for event in events if event.name == "state.changed"] == [
+        "reviewing_diff",
+        "waiting_for_user",
+    ]
+
+
+def test_run_review_diff_stage_treats_eof_as_decline(monkeypatch, tmp_path) -> None:
+    runtime = WorkflowRuntime(
+        target_dir=str(tmp_path),
+        prompt="Make it so",
+        config=Config(interactive=True),
+        approved_plan=SimpleNamespace(summary="Ship it", tasks=[]),
+    )
+    runtime.all_changes = [CodeChangeSchema(path="src/app.py", action="update", content="x")]
+
+    monkeypatch.setattr("workflow.output.preview_changes", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("workflow.output.Confirm.ask", lambda *_args, **_kwargs: (_ for _ in ()).throw(EOFError))
+
+    state = run_review_diff_stage(runtime, EventBus())
+
+    assert state is WorkflowState.EDITING_PLAN
 
 
 def test_run_workflow_core_uses_plan_summary_when_execution_has_no_changes(
