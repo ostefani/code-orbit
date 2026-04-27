@@ -57,8 +57,39 @@ def test_agent_run_result_status_invariants() -> None:
             error="unexpected",
         )
 
+    with pytest.raises(ValidationError, match="ANSWERED runs require an answer"):
+        AgentRunResult(request=request, status=AgentRunStatus.ANSWERED)
+
+    with pytest.raises(ValidationError, match="ANSWERED runs must not include an error"):
+        AgentRunResult(
+            request=request,
+            status=AgentRunStatus.ANSWERED,
+            answer="Here is why.",
+            error="unexpected",
+        )
+
+    with pytest.raises(
+        ValidationError,
+        match="ANSWERED runs must not include affected files",
+    ):
+        AgentRunResult(
+            request=request,
+            status=AgentRunStatus.ANSWERED,
+            answer="Here is why.",
+            affected_files=["src/app.py"],
+        )
+
     with pytest.raises(ValidationError, match="CANCELLED runs require completed_at"):
         AgentRunResult(request=request, status=AgentRunStatus.CANCELLED)
+
+    answered = AgentRunResult(
+        request=request,
+        status=AgentRunStatus.ANSWERED,
+        summary="Explanation",
+        answer="Here is why.",
+    )
+    assert answered.answer == "Here is why."
+    assert answered.affected_files == []
 
 
 def test_agent_run_result_coerces_affected_files_to_strings() -> None:

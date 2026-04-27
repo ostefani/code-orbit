@@ -85,5 +85,6 @@ async def run_planning_stage(
     reset_execution_state(runtime)
     runtime.execution_feedback = None
     if not runtime.architect_plan.tasks:
+        runtime.approved_plan = runtime.architect_plan
         return WorkflowState.COMPLETED
     return WorkflowState.EDITING_PLAN

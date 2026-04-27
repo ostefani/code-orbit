@@ -13,6 +13,7 @@ class AgentRunStatus(str, Enum):
     QUEUED = "queued"
     RUNNING = "running"
     COMPLETED = "completed"
+    ANSWERED = "answered"
     FAILED = "failed"
     CANCELLED = "cancelled"
 
@@ -43,6 +44,7 @@ class AgentRunResult(BaseModel):
     request: AgentRunRequest
     status: AgentRunStatus
     summary: str | None = None
+    answer: str | None = None
     error: str | None = None
     affected_files: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -71,6 +73,14 @@ class AgentRunResult(BaseModel):
                 raise ValueError("COMPLETED runs require a summary.")
             if self.error is not None:
                 raise ValueError("COMPLETED runs must not include an error.")
+
+        if self.status is AgentRunStatus.ANSWERED:
+            if not self.answer:
+                raise ValueError("ANSWERED runs require an answer.")
+            if self.error is not None:
+                raise ValueError("ANSWERED runs must not include an error.")
+            if self.affected_files:
+                raise ValueError("ANSWERED runs must not include affected files.")
 
         if self.status is AgentRunStatus.CANCELLED and self.completed_at is None:
             raise ValueError("CANCELLED runs require completed_at.")

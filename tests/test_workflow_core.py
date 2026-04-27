@@ -7,6 +7,7 @@ from agent.events import EventBus
 from api import AgentRunRequest, AgentRunStatus
 from workflow.core import run_workflow_core
 from workflow.editing import run_editing_plan_stage
+from workflow.planning import run_planning_stage
 from workflow._state import WorkflowRuntime, WorkflowState
 
 
@@ -44,6 +45,32 @@ def test_run_editing_plan_stage_auto_approves_when_non_interactive(
     assert state is WorkflowState.EXECUTING
     assert runtime.approved_plan is plan
     assert events == []
+
+
+def test_run_planning_stage_approves_direct_answer_plan(monkeypatch, tmp_path) -> None:
+    plan = SimpleNamespace(
+        summary="Explanation",
+        answer="This code does the thing.",
+        tasks=[],
+        model_dump_json=lambda indent=None: "{}",
+    )
+    runtime = WorkflowRuntime(
+        target_dir=str(tmp_path),
+        prompt="Explain this",
+        config=Config(interactive=False),
+        context_result=SimpleNamespace(context="context"),
+    )
+
+    async def fake_call_architect(*_args, **_kwargs):
+        return plan
+
+    monkeypatch.setattr("workflow.planning.call_architect", fake_call_architect)
+
+    state = asyncio.run(run_planning_stage(runtime, EventBus()))
+
+    assert state is WorkflowState.COMPLETED
+    assert runtime.architect_plan is plan
+    assert runtime.approved_plan is plan
 
 
 def test_run_workflow_core_returns_completed_result(monkeypatch) -> None:
@@ -141,6 +168,49 @@ def test_run_workflow_core_returns_completed_result(monkeypatch) -> None:
     assert result.run_id == request.run_id
     assert result.summary == "Ship it"
     assert result.affected_files == ["src/app.py"]
+    assert [event.name for event in events] == ["run.started", "run.completed"]
+
+
+def test_run_workflow_core_returns_answered_result(monkeypatch) -> None:
+    request = AgentRunRequest(target_dir="/tmp/project", prompt="Explain this")
+    bus = EventBus()
+    events = []
+    bus.subscribe(events.append)
+    adapter = _DummyAdapter()
+
+    async def fake_create_chat_adapter(_config):
+        return adapter
+
+    async def fake_build_context(runtime, _event_bus):
+        runtime.context_result = SimpleNamespace(context="context")
+        return WorkflowState.PLANNING
+
+    async def fake_plan(runtime, _event_bus, on_chunk=None):
+        runtime.architect_plan = SimpleNamespace(
+            summary="Explanation",
+            answer="This code does the thing.",
+            tasks=[],
+        )
+        runtime.approved_plan = runtime.architect_plan
+        return WorkflowState.COMPLETED
+
+    monkeypatch.setattr("workflow.core.create_chat_adapter", fake_create_chat_adapter)
+    monkeypatch.setattr("workflow.core.run_build_context_stage", fake_build_context)
+    monkeypatch.setattr("workflow.core.run_planning_stage", fake_plan)
+
+    result = asyncio.run(
+        run_workflow_core(
+            request,
+            config=Config(interactive=False),
+            event_bus=bus,
+        )
+    )
+
+    assert adapter.closed is True
+    assert result.status is AgentRunStatus.ANSWERED
+    assert result.summary == "Explanation"
+    assert result.answer == "This code does the thing."
+    assert result.affected_files == []
     assert [event.name for event in events] == ["run.started", "run.completed"]
 
 

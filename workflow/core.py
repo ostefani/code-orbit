@@ -109,6 +109,29 @@ async def run_workflow_core(
                     state = WorkflowState.FAILED
 
         if state == WorkflowState.COMPLETED:
+            approved_plan = runtime.approved_plan or runtime.architect_plan
+            if (
+                approved_plan is not None
+                and not approved_plan.tasks
+                and approved_plan.answer
+            ):
+                result = AgentRunResult(
+                    request=request,
+                    status=AgentRunStatus.ANSWERED,
+                    summary=approved_plan.summary,
+                    answer=approved_plan.answer,
+                    completed_at=_terminal_time(),
+                )
+                event_bus.publish(AgentEvent(
+                    name="run.completed",
+                    state=WorkflowState.COMPLETED.value,
+                    message="Agent run completed.",
+                    payload=RunCompletedPayload(
+                        affected_count=0,
+                    ),
+                ))
+                return result
+
             result = AgentRunResult(
                 request=request,
                 status=AgentRunStatus.COMPLETED,
