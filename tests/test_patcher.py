@@ -122,6 +122,13 @@ def test_preview_update_diff_text_is_plain(temp_project):
     assert "+++ b/existing.py" in payload.diff_text
 
 
+def test_preview_update_rejects_missing_content(temp_project):
+    change = CodeChangeSchema.model_construct(path="existing.py", action="update")
+
+    with pytest.raises(RuntimeError, match="requires content"):
+        preview_changes(str(temp_project), [change], event_bus=EventBus())
+
+
 def test_apply_update(temp_project):
     changes = [
         CodeChangeSchema(

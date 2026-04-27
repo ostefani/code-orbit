@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Callable, Generic, TypeVar, IO
+from typing import Any, Callable, Generic, TypeVar, IO, cast
 
 
 PayloadT = TypeVar("PayloadT")
@@ -159,17 +159,17 @@ class EventBus:
         else:
             safe_payload = copy.deepcopy(payload)
 
-        safe_event = AgentEvent(
+        safe_event: AgentEvent[PayloadT] = AgentEvent(
             name=event.name,
             level=event.level,
             state=event.state,
             message=event.message,
-            payload=safe_payload,
+            payload=cast(PayloadT, safe_payload),
             timestamp=event.timestamp,
         )
         for subscriber in self._subscribers:
             try:
-                subscriber(safe_event)
+                subscriber(cast(AgentEvent[object], safe_event))
             except Exception as exc:
                 tb = traceback.format_exc()
                 print(f"Subscriber error: {exc}\n{tb}", file=sys.stderr)
@@ -194,23 +194,27 @@ class EventBus:
         return self.publish(event)
 
 
+def event_to_dict(event: AgentEvent[Any]) -> dict[str, object]:
+    payload_obj = event.payload
+    if is_dataclass(payload_obj) and not isinstance(payload_obj, type):
+        payload = asdict(payload_obj)
+    else:
+        payload = payload_obj
+    return {
+        "timestamp": event.timestamp,
+        "level": event.level,
+        "event": event.name,
+        "state": event.state,
+        "message": event.message,
+        "payload": payload,
+    }
+
+
 class JsonEventFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         event = getattr(record, "event", None)
         if isinstance(event, AgentEvent):
-            payload_obj = event.payload
-            if is_dataclass(payload_obj) and not isinstance(payload_obj, type):
-                payload = asdict(payload_obj)
-            else:
-                payload = payload_obj
-            body = {
-                "timestamp": event.timestamp,
-                "level": event.level,
-                "event": event.name,
-                "state": event.state,
-                "message": event.message,
-                "payload": payload,
-            }
+            body = event_to_dict(event)
         else:
             # Non-AgentEvent records: wrap in a uniform JSON envelope so the
             # .jsonl file remains machine-parseable regardless of log source.
@@ -235,7 +239,7 @@ class LoggingEventSubscriber:
 
 
 class DeferredRotatingFileHandler(RotatingFileHandler):
-    def _open(self) -> IO[bytes]:
+    def _open(self) -> IO[str]:
         Path(self.baseFilename).parent.mkdir(parents=True, exist_ok=True)
         return super()._open()
 

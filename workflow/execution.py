@@ -197,12 +197,17 @@ async def run_execution_stage(
             payload=StateChangedPayload(),
         ))
         try:
-            def _task_chunk(
-                chunk: str,
-                _i: int = index,
-                _t: int = task_total,
-            ) -> None:
-                on_chunk(_i, _t, chunk)
+            task_chunk_callback = None
+            if on_chunk is not None:
+                def _task_chunk(
+                    chunk: str,
+                    _i: int = index,
+                    _t: int = task_total,
+                    _callback: Callable[[int, int, str], None] = on_chunk,
+                ) -> None:
+                    _callback(_i, _t, chunk)
+
+                task_chunk_callback = _task_chunk
 
             result = await call_coder_for_task(
                 approved_plan,
@@ -210,7 +215,7 @@ async def run_execution_stage(
                 runtime.working_context,
                 runtime.config,
                 chat_adapter=runtime.chat_adapter,
-                on_chunk=_task_chunk if on_chunk is not None else None,
+                on_chunk=task_chunk_callback,
             )
         except Exception as exc:
             return _handle_task_failure(runtime, event_bus, exc)

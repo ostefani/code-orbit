@@ -20,6 +20,7 @@ from .errors import WorkflowError
 
 if TYPE_CHECKING:
     from agent.llm import PlanSchema
+    from rich.console import Console
 
 __all__ = ["run_workflow", "WorkflowError"]
 
@@ -81,24 +82,28 @@ async def run_workflow(
         )
         config = config_result.config
     except Exception as exc:
-        event_bus.publish(AgentEvent(
-            name="run.failed",
-            level="error",
-            state="loading_config",
-            message=str(exc),
-            payload=EmptyPayload(),
-        ))
+        event_bus.publish(
+            AgentEvent(
+                name="run.failed",
+                level="error",
+                state="loading_config",
+                message=str(exc),
+                payload=EmptyPayload(),
+            )
+        )
         console_obj.print(f"[bold red]Error loading config:[/bold red] {exc}")
         raise WorkflowError(str(exc)) from exc
 
     for message in config_result.messages:
-        event_bus.publish(AgentEvent(
-            name="config.message",
-            level=message.level,
-            state="loading_config",
-            message=message.text,
-            payload=ConfigMessagePayload(text=message.text),
-        ))
+        event_bus.publish(
+            AgentEvent(
+                name="config.message",
+                level=message.level,
+                state="loading_config",
+                message=message.text,
+                payload=ConfigMessagePayload(text=message.text),
+            )
+        )
 
     config = config.model_copy(
         update={
@@ -128,7 +133,7 @@ async def run_workflow(
         return
 
     request = AgentRunRequest(
-        target_dir=target_path,
+        target_dir=Path(target_path),
         prompt=prompt,
         auto_commit=auto_commit,
         allow_delete=allow_delete,

@@ -121,6 +121,10 @@ def preview_changes(
 
         # update
         new_content = change.content
+        if new_content is None:
+            raise RuntimeError(
+                f"Action {action!r} for {change.path!r} requires content."
+            )
         if path.exists():
             old_content = path.read_text(encoding="utf-8")
             if old_content == new_content:

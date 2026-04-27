@@ -18,6 +18,7 @@ from agent.events import (
     RunStartedPayload,
     configure_event_logger,
     build_event_logger,
+    event_to_dict,
 )
 
 
@@ -72,6 +73,38 @@ def test_logging_subscriber_emits_json() -> None:
     assert payload["event"] == "run.started"
     assert payload["state"] == "starting"
     assert payload["payload"]["model"] == "local"
+
+
+def test_event_to_dict_matches_json_event_formatter() -> None:
+    event = AgentEvent(
+        name="run.started",
+        state="starting",
+        message="Agent run started.",
+        payload=RunStartedPayload(model="local", target_dir="/tmp/project"),
+        timestamp="2026-04-26T12:00:00+00:00",
+    )
+    record = logging.LogRecord(
+        name="test",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg=event.message,
+        args=(),
+        exc_info=None,
+    )
+    record.event = event
+
+    expected = {
+        "timestamp": "2026-04-26T12:00:00+00:00",
+        "level": "info",
+        "event": "run.started",
+        "state": "starting",
+        "message": "Agent run started.",
+        "payload": {"target_dir": "/tmp/project", "model": "local"},
+    }
+
+    assert event_to_dict(event) == expected
+    assert json.loads(JsonEventFormatter().format(record)) == expected
 
 
 def test_event_bus_isolates_subscriber_failures() -> None:
