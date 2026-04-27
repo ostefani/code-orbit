@@ -24,10 +24,11 @@ class _DummyAdapter:
         return None
 
 
-def test_run_editing_plan_stage_auto_approves_when_non_interactive(
+def test_run_editing_plan_stage_opens_editor_even_when_non_interactive(
     monkeypatch, tmp_path
 ) -> None:
     plan = SimpleNamespace(summary="Ship it", tasks=[])
+    approved_plan = SimpleNamespace(summary="Approved", tasks=[])
     runtime = WorkflowRuntime(
         target_dir=str(tmp_path),
         prompt="Make it so",
@@ -39,16 +40,19 @@ def test_run_editing_plan_stage_auto_approves_when_non_interactive(
     bus = EventBus()
     bus.subscribe(events.append)
 
-    def fail_open_editor(_plan_path):
-        raise AssertionError("non-interactive runs must not open the editor")
+    def fake_open_editor(plan_path):
+        assert plan_path == tmp_path / "plan.json"
+        return approved_plan
 
-    monkeypatch.setattr("workflow.editing.open_plan_in_editor", fail_open_editor)
+    monkeypatch.setattr("workflow.editing.open_plan_in_editor", fake_open_editor)
 
     state = run_editing_plan_stage(runtime, bus)
 
     assert state is WorkflowState.EXECUTING
-    assert runtime.approved_plan is plan
-    assert events == []
+    assert runtime.approved_plan is approved_plan
+    assert [event.state for event in events if event.name == "state.changed"] == [
+        "editing_plan"
+    ]
 
 
 def test_run_planning_stage_approves_direct_answer_plan(monkeypatch, tmp_path) -> None:

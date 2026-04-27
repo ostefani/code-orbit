@@ -49,10 +49,6 @@ def run_editing_plan_stage(
     assert runtime.plan_path is not None
     assert runtime.architect_plan is not None
 
-    if not runtime.config.interactive:
-        runtime.approved_plan = runtime.architect_plan
-        return WorkflowState.EXECUTING
-
     event_bus.publish(AgentEvent(
         name="state.changed",
         state=WorkflowState.EDITING_PLAN.value,
