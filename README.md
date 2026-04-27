@@ -163,6 +163,43 @@ When you edit the plan, Code Orbit reads `EDITOR` as a command line rather than 
 
 Tokens are counted using `tokenizer_backend: estimate`. If you want to learn more on how to use tokenizers and improve tokens counting see TOKEN_COUNTING.md.
 
+## Public API
+
+Code Orbit now exposes a small Python API for external runners and desktop front-ends.
+
+```python
+from pathlib import Path
+
+from api import AgentRunRequest, AgentRunStatus
+from workflow.core import run_workflow_core
+
+request = AgentRunRequest(
+    target_dir=Path("~/projects/my-app").expanduser(),
+    prompt="Add request logging to every endpoint",
+    auto_commit=False,
+    allow_delete=False,
+)
+```
+
+`AgentRunRequest` is the public input model. It carries the run identifier, target directory, prompt, and the per-run policy flags that callers may override.
+
+`run_workflow_core()` is the reusable workflow entrypoint. It accepts an `AgentRunRequest`, a loaded `Config`, and an `EventBus`, then returns an `AgentRunResult`.
+
+`AgentRunResult` reports the final status, summary or answer, optional error, affected files, and timestamps. `run_id` is available as a property copied from the original request.
+
+`AgentRunStatus` describes the lifecycle returned by the API:
+
+- `queued`
+- `running`
+- `completed`
+- `answered`
+- `failed`
+- `cancelled`
+
+The CLI wrapper `workflow.run_workflow()` remains the terminal-facing entrypoint. It loads config, publishes lifecycle events, and then delegates the actual run to `run_workflow_core()`.
+
+For event-driven consumers, `agent.events.AsyncEventQueue` can be subscribed to the event bus and consumed asynchronously to stream progress without blocking the workflow.
+
 ### All options
 
 | Flag               | Default       | Description                |
@@ -257,6 +294,7 @@ llama-server \
 ```
 code-orbit/
 ├── main.py              # CLI wrapper, history, prompt handling
+├── api/                 # Public request / result / status models
 ├── agent/
 │   ├── config.py        # Config dataclass, YAML loading
 │   ├── context.py       # Directory walker, context builder
