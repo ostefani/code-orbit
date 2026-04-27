@@ -174,13 +174,6 @@ async def run_execution_stage(
     assert runtime.context_result is not None
     approved_plan = require_approved_plan(runtime)
 
-    event_bus.publish(AgentEvent(
-        name="state.changed",
-        state=WorkflowState.EXECUTING.value,
-        message="Generating file replacements.",
-        payload=StateChangedPayload(),
-    ))
-
     runtime.all_changes = []
     runtime.task_summaries = []
     runtime.working_context = runtime.context_result.context

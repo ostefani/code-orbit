@@ -68,8 +68,116 @@ async def run_workflow(
 
     console_obj = console or Console()
     event_bus = EventBus()
-    event_bus.subscribe(CliEventRenderer(console_obj))
     target_path = str(Path(target_dir).resolve())
+
+    progress = Progress(
+        SpinnerColumn(style="bold magenta"),
+        TextColumn("{task.description}"),
+        transient=True,
+        console=console_obj,
+    )
+
+    @dataclass
+    class _ProgressState:
+        live: Live | None = None
+        plan_task_id: TaskID | None = None
+        plan_chunk_count: int = 0
+        task_task_ids: dict[int, TaskID] = field(default_factory=dict)
+        task_chunk_counts: dict[int, int] = field(default_factory=dict)
+
+    progress_state = _ProgressState()
+
+    def start_live() -> None:
+        if progress_state.live is None:
+            progress_state.live = Live(
+                progress,
+                console=console_obj,
+                refresh_per_second=12,
+            )
+            progress_state.live.start()
+
+    def stop_live() -> None:
+        if progress_state.live is not None:
+            progress_state.live.stop()
+            progress_state.live = None
+
+    def _remove_plan_task() -> None:
+        if progress_state.plan_task_id is not None:
+            progress.remove_task(progress_state.plan_task_id)
+            progress_state.plan_task_id = None
+        progress_state.plan_chunk_count = 0
+
+    def _remove_task_tasks() -> None:
+        for task_id in progress_state.task_task_ids.values():
+            progress.remove_task(task_id)
+        progress_state.task_task_ids.clear()
+        progress_state.task_chunk_counts.clear()
+
+    def progress_subscriber(event: AgentEvent[object]) -> None:
+        if (
+            event.name == "state.changed"
+            and event.state
+            in {
+                "editing_plan",
+                "reviewing_diff",
+                "waiting_for_user",
+                "applying",
+                "committing",
+            }
+        ) or event.name in {
+            "plan.ready",
+            "run.proposal_ready",
+            "run.completed",
+            "run.failed",
+        }:
+            stop_live()
+
+        if event.name != "state.changed":
+            return
+
+        if event.state == "planning":
+            _remove_plan_task()
+        elif event.state == "executing":
+            _remove_task_tasks()
+
+    def on_plan_chunk(_chunk: str) -> None:
+        start_live()
+        if progress_state.plan_task_id is None:
+            progress_state.plan_task_id = progress.add_task(
+                "Architect is streaming response...",
+                total=None,
+            )
+        progress_state.plan_chunk_count += 1
+        progress.update(
+            progress_state.plan_task_id,
+            description=(
+                "Architect is streaming response... "
+                f"({progress_state.plan_chunk_count} chunks)"
+            ),
+        )
+
+    def on_task_chunk(task_index: int, task_total: int, _chunk: str) -> None:
+        start_live()
+        task_id = progress_state.task_task_ids.get(task_index)
+        if task_id is None:
+            task_id = progress.add_task(
+                f"Coder is streaming task {task_index}/{task_total}...",
+                total=None,
+            )
+            progress_state.task_task_ids[task_index] = task_id
+            progress_state.task_chunk_counts[task_index] = 0
+
+        progress_state.task_chunk_counts[task_index] += 1
+        progress.update(
+            task_id,
+            description=(
+                f"Coder is streaming task {task_index}/{task_total}... "
+                f"({progress_state.task_chunk_counts[task_index]} chunks)"
+            ),
+        )
+
+    event_bus.subscribe(progress_subscriber)
+    event_bus.subscribe(CliEventRenderer(console_obj))
     event_bus.subscribe(
         LoggingEventSubscriber(
             build_event_logger(log_dir=Path(target_path) / ".code-orbit")
@@ -138,109 +246,6 @@ async def run_workflow(
         auto_commit=auto_commit,
         allow_delete=allow_delete,
     )
-
-    progress = Progress(
-        SpinnerColumn(style="bold magenta"),
-        TextColumn("{task.description}"),
-        transient=True,
-        console=console_obj,
-    )
-
-    @dataclass
-    class _ProgressState:
-        live: Live | None = None
-        plan_task_id: TaskID | None = None
-        plan_chunk_count: int = 0
-        task_task_ids: dict[int, TaskID] = field(default_factory=dict)
-        task_chunk_counts: dict[int, int] = field(default_factory=dict)
-
-    progress_state = _ProgressState()
-
-    def start_live() -> None:
-        if progress_state.live is None:
-            progress_state.live = Live(
-                progress,
-                console=console_obj,
-                refresh_per_second=12,
-            )
-            progress_state.live.start()
-
-    def stop_live() -> None:
-        if progress_state.live is not None:
-            progress_state.live.stop()
-            progress_state.live = None
-
-    def _remove_plan_task() -> None:
-        if progress_state.plan_task_id is not None:
-            progress.remove_task(progress_state.plan_task_id)
-            progress_state.plan_task_id = None
-        progress_state.plan_chunk_count = 0
-
-    def _remove_task_tasks() -> None:
-        for task_id in progress_state.task_task_ids.values():
-            progress.remove_task(task_id)
-        progress_state.task_task_ids.clear()
-        progress_state.task_chunk_counts.clear()
-
-    def progress_subscriber(event: AgentEvent[object]) -> None:
-        if (
-            event.name == "state.changed"
-            and event.state
-            in {
-                "editing_plan",
-                "reviewing_diff",
-                "waiting_for_user",
-                "applying",
-                "committing",
-            }
-        ) or event.name in {"run.proposal_ready", "run.completed", "run.failed"}:
-            stop_live()
-
-        if event.name != "state.changed":
-            return
-
-        if event.state == "planning":
-            _remove_plan_task()
-        elif event.state == "executing":
-            _remove_task_tasks()
-
-    def on_plan_chunk(_chunk: str) -> None:
-        start_live()
-        if progress_state.plan_task_id is None:
-            progress_state.plan_task_id = progress.add_task(
-                "Architect is streaming response...",
-                total=None,
-            )
-        progress_state.plan_chunk_count += 1
-        progress.update(
-            progress_state.plan_task_id,
-            description=(
-                "Architect is streaming response... "
-                f"({progress_state.plan_chunk_count} chunks)"
-            ),
-        )
-
-    def on_task_chunk(task_index: int, task_total: int, _chunk: str) -> None:
-        start_live()
-        task_id = progress_state.task_task_ids.get(task_index)
-        if task_id is None:
-            task_id = progress.add_task(
-                f"Coder is streaming task {task_index}/{task_total}...",
-                total=None,
-            )
-            progress_state.task_task_ids[task_index] = task_id
-            progress_state.task_chunk_counts[task_index] = 0
-
-        progress_state.task_chunk_counts[task_index] += 1
-        progress.update(
-            task_id,
-            description=(
-                f"Coder is streaming task {task_index}/{task_total}... "
-                f"({progress_state.task_chunk_counts[task_index]} chunks)"
-            ),
-        )
-
-    event_bus.subscribe(progress_subscriber)
 
     try:
         result = await run_workflow_core(

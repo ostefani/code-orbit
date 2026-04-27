@@ -4,9 +4,11 @@ from types import SimpleNamespace
 
 from agent.config import Config
 from agent.events import EventBus
+from agent.schemas import CodeChangeSchema
 from api import AgentRunRequest, AgentRunStatus
 from workflow.core import run_workflow_core
 from workflow.editing import run_editing_plan_stage
+from workflow.execution import run_execution_stage
 from workflow.planning import run_planning_stage
 from workflow._state import WorkflowRuntime, WorkflowState
 
@@ -169,6 +171,57 @@ def test_run_workflow_core_returns_completed_result(monkeypatch) -> None:
     assert result.summary == "Ship it"
     assert result.affected_files == ["src/app.py"]
     assert [event.name for event in events] == ["run.started", "run.completed"]
+
+
+def test_run_execution_stage_emits_one_state_change_per_task(monkeypatch, tmp_path) -> None:
+    runtime = WorkflowRuntime(
+        target_dir=str(tmp_path),
+        prompt="Make it so",
+        config=Config(interactive=False),
+        context_result=SimpleNamespace(context="context"),
+        approved_plan=SimpleNamespace(
+            summary="Ship it",
+            tasks=[
+                SimpleNamespace(goal="Task 1", files=["a.py"], reasoning="why"),
+                SimpleNamespace(goal="Task 2", files=["b.py"], reasoning="why"),
+            ],
+        ),
+    )
+    events = []
+    bus = EventBus()
+    bus.subscribe(events.append)
+    calls = []
+
+    async def fake_call_coder_for_task(_plan, task, *_args, **_kwargs):
+        calls.append(task.goal)
+        return SimpleNamespace(
+            summary=f"Done {task.goal}",
+            changes=[
+                CodeChangeSchema(
+                    path=f"{task.goal.lower().replace(' ', '_')}.py",
+                    action="create",
+                    content="print('ok')",
+                )
+            ],
+        )
+
+    monkeypatch.setattr(
+        "workflow.execution.call_coder_for_task",
+        fake_call_coder_for_task,
+    )
+
+    state = asyncio.run(run_execution_stage(runtime, bus))
+
+    executing_events = [
+        event for event in events
+        if event.name == "state.changed" and event.state == "executing"
+    ]
+    assert state is WorkflowState.REVIEWING_DIFF
+    assert calls == ["Task 1", "Task 2"]
+    assert [event.message for event in executing_events] == [
+        "Generating file replacements for task 1/2.",
+        "Generating file replacements for task 2/2.",
+    ]
 
 
 def test_run_workflow_core_returns_answered_result(monkeypatch) -> None:
