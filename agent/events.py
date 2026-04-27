@@ -1,3 +1,4 @@
+import asyncio
 import copy
 import hashlib
 import json
@@ -8,7 +9,7 @@ from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Callable, Generic, TypeVar, IO
+from typing import Any, Callable, Generic, TypeVar, IO, cast
 
 
 PayloadT = TypeVar("PayloadT")
@@ -32,7 +33,8 @@ class RunStartedPayload:
 
 @dataclass(frozen=True)
 class StateChangedPayload:
-    pass
+    task_index: int | None = None
+    task_total: int | None = None
 
 
 @dataclass(frozen=True)
@@ -92,6 +94,15 @@ class RunProposalReadyPayload:
 
 
 @dataclass(frozen=True)
+class TaskCompletedPayload:
+    task_index: int
+    task_total: int
+    summary: str
+    change_count: int
+    goal: str
+
+
+@dataclass(frozen=True)
 class RunCompletedPayload:
     affected_count: int
 
@@ -141,6 +152,43 @@ class AgentEvent(Generic[PayloadT]):
 EventSubscriber = Callable[[AgentEvent[object]], None]
 
 
+class AsyncEventQueue:
+    """Async subscriber queue for programmatic consumers.
+
+    Events are enqueued with put_nowait so the synchronous publish loop is never
+    blocked. If the queue is full, the event is dropped silently.
+    """
+
+    def __init__(self, maxsize: int = 0) -> None:
+        self._queue: asyncio.Queue[AgentEvent[object] | None] = asyncio.Queue(maxsize)
+
+    def __call__(self, event: AgentEvent[object]) -> None:
+        try:
+            self._queue.put_nowait(event)
+        except asyncio.QueueFull:
+            pass
+
+    def close(self) -> None:
+        if self._queue.full():
+            try:
+                self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+        try:
+            self._queue.put_nowait(None)
+        except asyncio.QueueFull:
+            pass
+
+    def __aiter__(self) -> "AsyncEventQueue":
+        return self
+
+    async def __anext__(self) -> AgentEvent[object]:
+        item = await self._queue.get()
+        if item is None:
+            raise StopAsyncIteration
+        return item
+
+
 class EventBus:
     def __init__(self) -> None:
         self._subscribers: list[EventSubscriber] = []
@@ -159,17 +207,17 @@ class EventBus:
         else:
             safe_payload = copy.deepcopy(payload)
 
-        safe_event = AgentEvent(
+        safe_event: AgentEvent[PayloadT] = AgentEvent(
             name=event.name,
             level=event.level,
             state=event.state,
             message=event.message,
-            payload=safe_payload,
+            payload=cast(PayloadT, safe_payload),
             timestamp=event.timestamp,
         )
         for subscriber in self._subscribers:
             try:
-                subscriber(safe_event)
+                subscriber(cast(AgentEvent[object], safe_event))
             except Exception as exc:
                 tb = traceback.format_exc()
                 print(f"Subscriber error: {exc}\n{tb}", file=sys.stderr)
@@ -194,23 +242,27 @@ class EventBus:
         return self.publish(event)
 
 
+def event_to_dict(event: AgentEvent[Any]) -> dict[str, object]:
+    payload_obj = event.payload
+    if is_dataclass(payload_obj) and not isinstance(payload_obj, type):
+        payload = asdict(payload_obj)
+    else:
+        payload = payload_obj
+    return {
+        "timestamp": event.timestamp,
+        "level": event.level,
+        "event": event.name,
+        "state": event.state,
+        "message": event.message,
+        "payload": payload,
+    }
+
+
 class JsonEventFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         event = getattr(record, "event", None)
         if isinstance(event, AgentEvent):
-            payload_obj = event.payload
-            if is_dataclass(payload_obj) and not isinstance(payload_obj, type):
-                payload = asdict(payload_obj)
-            else:
-                payload = payload_obj
-            body = {
-                "timestamp": event.timestamp,
-                "level": event.level,
-                "event": event.name,
-                "state": event.state,
-                "message": event.message,
-                "payload": payload,
-            }
+            body = event_to_dict(event)
         else:
             # Non-AgentEvent records: wrap in a uniform JSON envelope so the
             # .jsonl file remains machine-parseable regardless of log source.
@@ -235,7 +287,7 @@ class LoggingEventSubscriber:
 
 
 class DeferredRotatingFileHandler(RotatingFileHandler):
-    def _open(self) -> IO[bytes]:
+    def _open(self) -> IO[str]:
         Path(self.baseFilename).parent.mkdir(parents=True, exist_ok=True)
         return super()._open()
 

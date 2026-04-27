@@ -1,14 +1,17 @@
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from rich.console import Console
-
-from agent.chat import ChatAdapter
 from agent.config import Config
-from agent.context import ContextBuildResult
-from agent.llm import PlanSchema
 from agent.schemas import CodeChangeSchema
+
+if TYPE_CHECKING:
+    from agent.chat import ChatAdapter
+    from agent.context import ContextBuildResult
+    from agent.llm import PlanSchema
 
 
 class WorkflowState(str, Enum):
@@ -28,7 +31,6 @@ class WorkflowRuntime:
     target_dir: str
     prompt: str
     config: Config
-    console: Console = field(default_factory=Console)
     chat_adapter: ChatAdapter | None = None
     context_result: ContextBuildResult | None = None
     plan_path: Path | None = None

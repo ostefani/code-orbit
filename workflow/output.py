@@ -1,8 +1,7 @@
-from rich.prompt import Confirm
-
 from agent.events import AgentEvent, EventBus, StateChangedPayload
 from agent.llm import format_plan_roadmap
 from agent.patcher import apply_changes, git_commit, preview_changes
+from rich.prompt import Confirm
 
 from ._state import (
     WorkflowRuntime,
@@ -32,11 +31,11 @@ def run_review_diff_stage(
             message="Waiting for user confirmation.",
             payload=StateChangedPayload(),
         ))
-        runtime.console.print()
-        if not Confirm.ask(
-            "[bold yellow]Apply these changes?[/bold yellow]",
-            console=runtime.console,
-        ):
+        try:
+            choice = Confirm.ask("Apply these changes?", default=True)
+        except EOFError:
+            choice = False
+        if not choice:
             reset_execution_state(runtime)
             return WorkflowState.EDITING_PLAN
 
@@ -54,7 +53,6 @@ def run_applying_stage(
         message="Applying changes.",
         payload=StateChangedPayload(),
     ))
-    runtime.console.print("\n[bold green]📝 Applying changes...[/bold green]")
     affected = apply_changes(runtime.target_dir, runtime.all_changes, event_bus=event_bus)
     runtime.final_summary = runtime.final_summary or approved_plan.summary
     runtime.affected_files = affected

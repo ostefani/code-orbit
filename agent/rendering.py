@@ -19,6 +19,7 @@ from .events import (
     PlanReadyPayload,
     RunCompletedPayload,
     RunProposalReadyPayload,
+    TaskCompletedPayload,
 )
 
 
@@ -98,6 +99,24 @@ class CliEventRenderer:
 
         if event.name == "run.no_changes":
             rprint("\n[bold green]✅ No changes needed.[/bold green]")
+            return
+
+        if event.name == "task.completed" and isinstance(
+            event.payload, TaskCompletedPayload
+        ):
+            if event.payload.change_count:
+                rprint(
+                    f"\n[green]Task {event.payload.task_index}/"
+                    f"{event.payload.task_total}:[/green] "
+                    f"{event.payload.summary} "
+                    f"({event.payload.change_count} file(s))"
+                )
+            else:
+                rprint(
+                    f"\n[yellow]Task {event.payload.task_index}/"
+                    f"{event.payload.task_total}:[/yellow] "
+                    f"No changes required for '{event.payload.goal}'"
+                )
             return
 
         if event.name == "preview.change":

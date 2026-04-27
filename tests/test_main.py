@@ -8,9 +8,10 @@ import pytest
 
 from agent.chat import ProviderRateLimitError, ProviderUnavailableError
 from agent.config import Config
-from agent.events import AgentEvent, EventBus, RunProposalReadyPayload
+from agent.events import AgentEvent, EventBus, PlanReadyPayload, RunProposalReadyPayload
 from agent.llm import CodeResponseSchema, PlanSchema, PlanTaskSchema, call_coder
 from agent.schemas import CodeChangeSchema
+from api import AgentRunResult, AgentRunStatus
 from rich.console import Console
 import main as main_module
 from main import load_history, save_history
@@ -146,6 +147,173 @@ def test_run_workflow_wraps_config_failures_as_workflow_error(
                 console=Console(file=StringIO()),
             )
         )
+
+
+def test_run_workflow_delegates_to_core_with_public_request(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    seen = {}
+
+    async def fake_run_workflow_core(
+        request,
+        *,
+        config,
+        event_bus,
+        on_plan_chunk=None,
+        on_task_chunk=None,
+    ):
+        seen["request"] = request
+        seen["config"] = config
+        seen["event_bus"] = event_bus
+        assert on_plan_chunk is not None
+        assert on_task_chunk is not None
+        on_plan_chunk("plan")
+        event_bus.emit(
+            "plan.ready",
+            PlanReadyPayload(summary="Plan", task_count=1, draft_path="plan.json"),
+            state="reviewing_plan",
+        )
+        on_task_chunk(1, 1, "task")
+        event_bus.emit(
+            "run.proposal_ready",
+            RunProposalReadyPayload(summary="Done", change_count=1),
+            state="validated",
+        )
+        return AgentRunResult(
+            request=request,
+            status=AgentRunStatus.COMPLETED,
+            summary="done",
+        )
+
+    monkeypatch.setattr("workflow.run_workflow_core", fake_run_workflow_core)
+
+    asyncio.run(
+        run_workflow(
+            target_dir=str(tmp_path),
+            prompt="Test prompt",
+            no_interactive=True,
+            auto_commit=True,
+            allow_delete=True,
+            console=Console(file=StringIO()),
+        )
+    )
+
+    assert seen["request"].target_dir == tmp_path
+    assert seen["request"].prompt == "Test prompt"
+    assert seen["request"].auto_commit is True
+    assert seen["request"].allow_delete is True
+    assert seen["config"].interactive is False
+    assert seen["config"].auto_commit is False
+    assert seen["config"].allow_delete is False
+
+
+def test_run_workflow_translates_failed_core_result(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    async def fake_run_workflow_core(
+        request,
+        *,
+        config,
+        event_bus,
+        on_plan_chunk=None,
+        on_task_chunk=None,
+    ):
+        return AgentRunResult(
+            request=request,
+            status=AgentRunStatus.FAILED,
+            error="boom",
+        )
+
+    monkeypatch.setattr("workflow.run_workflow_core", fake_run_workflow_core)
+
+    with pytest.raises(WorkflowError, match="boom"):
+        asyncio.run(
+            run_workflow(
+                target_dir=str(tmp_path),
+                prompt="Test prompt",
+                console=Console(file=StringIO()),
+            )
+        )
+
+
+def test_run_workflow_accepts_answered_core_result(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    async def fake_run_workflow_core(
+        request,
+        *,
+        config,
+        event_bus,
+        on_plan_chunk=None,
+        on_task_chunk=None,
+    ):
+        return AgentRunResult(
+            request=request,
+            status=AgentRunStatus.ANSWERED,
+            summary="Explanation",
+            answer="Nothing to change.",
+        )
+
+    monkeypatch.setattr("workflow.run_workflow_core", fake_run_workflow_core)
+
+    asyncio.run(
+        run_workflow(
+            target_dir=str(tmp_path),
+            prompt="Test prompt",
+            console=Console(file=StringIO()),
+        )
+    )
+
+
+def test_run_workflow_tree_mode_does_not_call_core(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    published_events = []
+
+    class FakeEventBus:
+        def __init__(self) -> None:
+            self.subscribers = []
+
+        def subscribe(self, subscriber) -> None:
+            self.subscribers.append(subscriber)
+
+        def publish(self, event):
+            published_events.append(event)
+            return event
+
+        def emit(self, *args, **kwargs):
+            raise AssertionError("tree mode should not emit extra events")
+
+    async def fake_run_workflow_core(*_args, **_kwargs):
+        raise AssertionError("tree mode should not run workflow core")
+
+    monkeypatch.setattr("workflow.EventBus", FakeEventBus)
+    monkeypatch.setattr("workflow.run_workflow_core", fake_run_workflow_core)
+    monkeypatch.setattr("agent.context.get_file_tree", lambda *_args, **_kwargs: "tree")
+    monkeypatch.setattr(
+        "workflow.Config.load_with_diagnostics",
+        lambda *args, **kwargs: SimpleNamespace(
+            config=Config(interactive=True),
+            messages=(),
+        ),
+    )
+
+    asyncio.run(
+        run_workflow(
+            target_dir=str(tmp_path),
+            prompt="Test prompt",
+            tree=True,
+            console=Console(file=StringIO()),
+        )
+    )
+
+    assert [event.name for event in published_events] == ["run.started"]
 
 
 def test_main_reports_unexpected_errors(monkeypatch, tmp_path: Path, capsys) -> None:
@@ -582,7 +750,7 @@ def test_open_plan_in_editor_parses_modified_plan(monkeypatch, tmp_path) -> None
     monkeypatch.setenv("EDITOR", "vim -u NONE")
     temp_path.write_text(original.model_dump_json(indent=2), encoding="utf-8")
 
-    approved = open_plan_in_editor(temp_path, Console(file=StringIO()))
+    approved = open_plan_in_editor(temp_path)
 
     assert approved.summary == "Edited plan"
     assert approved.tasks[0].files == ["src/app.py", "agent/llm.py"]

@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass
 import json
 import logging
@@ -9,6 +10,7 @@ import pytest
 
 from agent.events import (
     AgentEvent,
+    AsyncEventQueue,
     ApplyFilePayload,
     EmptyPayload,
     EventBus,
@@ -18,6 +20,7 @@ from agent.events import (
     RunStartedPayload,
     configure_event_logger,
     build_event_logger,
+    event_to_dict,
 )
 
 
@@ -38,6 +41,85 @@ def test_event_bus_notifies_subscribers() -> None:
     assert len(events) == 1
     assert events[0].name == "state.changed"
     assert events[0].state == "planning"
+
+
+def test_async_event_queue_can_be_subscribed() -> None:
+    async def collect_events() -> list[AgentEvent[object]]:
+        bus = EventBus()
+        queue = AsyncEventQueue()
+        sync_events = []
+        bus.subscribe(queue)
+        bus.subscribe(sync_events.append)
+
+        published = bus.publish(
+            AgentEvent(
+                name="state.changed",
+                state="planning",
+                message="Building context.",
+                payload=EmptyPayload(),
+            )
+        )
+        queue.close()
+
+        events = []
+        async for event in queue:
+            events.append(event)
+        assert sync_events == [published]
+        return events
+
+    events = asyncio.run(collect_events())
+
+    assert len(events) == 1
+    assert events[0].name == "state.changed"
+
+
+def test_async_event_queue_drops_when_full() -> None:
+    async def collect_events() -> list[AgentEvent[object]]:
+        queue = AsyncEventQueue(maxsize=1)
+        queue(
+            AgentEvent(
+                name="first",
+                payload=EmptyPayload(),
+            )
+        )
+        queue(
+            AgentEvent(
+                name="dropped",
+                payload=EmptyPayload(),
+            )
+        )
+        item = await anext(queue)
+        queue.close()
+
+        events = [item]
+        async for event in queue:
+            events.append(event)
+        return events
+
+    events = asyncio.run(collect_events())
+
+    assert [event.name for event in events] == ["first"]
+
+
+def test_async_event_queue_close_terminates_when_full() -> None:
+    async def collect_events() -> list[AgentEvent[object]]:
+        queue = AsyncEventQueue(maxsize=1)
+        queue(
+            AgentEvent(
+                name="dropped-for-close",
+                payload=EmptyPayload(),
+            )
+        )
+        queue.close()
+
+        events = []
+        async for event in queue:
+            events.append(event)
+        return events
+
+    events = asyncio.run(collect_events())
+
+    assert events == []
 
 
 def test_logging_subscriber_emits_json() -> None:
@@ -72,6 +154,38 @@ def test_logging_subscriber_emits_json() -> None:
     assert payload["event"] == "run.started"
     assert payload["state"] == "starting"
     assert payload["payload"]["model"] == "local"
+
+
+def test_event_to_dict_matches_json_event_formatter() -> None:
+    event = AgentEvent(
+        name="run.started",
+        state="starting",
+        message="Agent run started.",
+        payload=RunStartedPayload(model="local", target_dir="/tmp/project"),
+        timestamp="2026-04-26T12:00:00+00:00",
+    )
+    record = logging.LogRecord(
+        name="test",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg=event.message,
+        args=(),
+        exc_info=None,
+    )
+    record.event = event
+
+    expected = {
+        "timestamp": "2026-04-26T12:00:00+00:00",
+        "level": "info",
+        "event": "run.started",
+        "state": "starting",
+        "message": "Agent run started.",
+        "payload": {"target_dir": "/tmp/project", "model": "local"},
+    }
+
+    assert event_to_dict(event) == expected
+    assert json.loads(JsonEventFormatter().format(record)) == expected
 
 
 def test_event_bus_isolates_subscriber_failures() -> None:

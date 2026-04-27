@@ -1,32 +1,51 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from rich.console import Console
-from rich.panel import Panel
-
-from agent.chat import create_chat_adapter
 from agent.config import Config
-from agent.context import get_file_tree
 from agent.events import (
     AgentEvent,
     ConfigMessagePayload,
     EmptyPayload,
     EventBus,
     LoggingEventSubscriber,
-    RunCompletedPayload,
     RunStartedPayload,
+    StateChangedPayload,
     build_event_logger,
 )
-from agent.rendering import CliEventRenderer
+from api import AgentRunRequest, AgentRunStatus
 
+from .core import run_workflow_core
 from .errors import WorkflowError
-from ._state import WorkflowRuntime, WorkflowState
-from .context import run_build_context_stage
-from .editing import run_editing_plan_stage
-from .execution import run_execution_stage
-from .output import run_applying_stage, run_committing_stage, run_review_diff_stage
-from .planning import run_planning_stage
+
+if TYPE_CHECKING:
+    from agent.llm import PlanSchema
+    from rich.console import Console
 
 __all__ = ["run_workflow", "WorkflowError"]
+
+
+def format_plan_for_display(plan: "PlanSchema") -> str:
+    lines = [f"[bold]{plan.summary}[/bold]"]
+    if not plan.tasks:
+        if plan.answer:
+            lines.append("")
+            lines.append(plan.answer)
+        else:
+            lines.append("[dim]No implementation tasks were proposed.[/dim]")
+        return "\n".join(lines)
+
+    lines.append("")
+    for index, task in enumerate(plan.tasks, 1):
+        files = ", ".join(task.files)
+        lines.append(f"[bold cyan]{index}. {task.goal}[/bold cyan]")
+        lines.append(f"[dim]Files:[/dim] {files}")
+        lines.append(f"[dim]Reason:[/dim] {task.reasoning}")
+        if index < len(plan.tasks):
+            lines.append("")
+    return "\n".join(lines)
 
 
 async def run_workflow(
@@ -41,17 +60,172 @@ async def run_workflow(
     tree: bool = False,
     console: Console | None = None,
 ) -> None:
+    from rich.console import Console
+    from rich.live import Live
+    from rich.panel import Panel
+    from rich.progress import Progress, SpinnerColumn, TaskID, TextColumn
+
+    from agent.context import get_file_tree
+    from agent.rendering import CliEventRenderer
+
     console_obj = console or Console()
     event_bus = EventBus()
-    event_bus.subscribe(CliEventRenderer(console_obj))
     target_path = str(Path(target_dir).resolve())
+
+    progress = Progress(
+        SpinnerColumn(style="bold magenta"),
+        TextColumn("{task.description}"),
+        transient=True,
+        console=console_obj,
+    )
+
+    @dataclass
+    class _ProgressState:
+        live: Live | None = None
+        context_task_id: TaskID | None = None
+        plan_task_id: TaskID | None = None
+        plan_chunk_count: int = 0
+        task_task_ids: dict[int, TaskID] = field(default_factory=dict)
+        task_chunk_counts: dict[int, int] = field(default_factory=dict)
+
+    progress_state = _ProgressState()
+
+    def start_live() -> None:
+        if progress_state.live is None:
+            progress_state.live = Live(
+                progress,
+                console=console_obj,
+                refresh_per_second=12,
+            )
+            progress_state.live.start()
+
+    def stop_live() -> None:
+        if progress_state.live is not None:
+            progress_state.live.stop()
+            progress_state.live = None
+
+    def _remove_plan_task() -> None:
+        if progress_state.plan_task_id is not None:
+            progress.remove_task(progress_state.plan_task_id)
+            progress_state.plan_task_id = None
+        progress_state.plan_chunk_count = 0
+
+    def _remove_context_task() -> None:
+        if progress_state.context_task_id is not None:
+            progress.remove_task(progress_state.context_task_id)
+            progress_state.context_task_id = None
+
+    def _remove_task_tasks() -> None:
+        for task_id in progress_state.task_task_ids.values():
+            progress.remove_task(task_id)
+        progress_state.task_task_ids.clear()
+        progress_state.task_chunk_counts.clear()
+
+    def progress_subscriber(event: AgentEvent[object]) -> None:
+        if event.name in {"context.summary", "run.completed", "run.failed"}:
+            stop_live()
+            _remove_context_task()
+            if event.name != "context.summary":
+                _remove_plan_task()
+                _remove_task_tasks()
+            return
+
+        if event.name == "plan.ready":
+            stop_live()
+            _remove_plan_task()
+            return
+
+        if event.name == "task.completed":
+            stop_live()
+            _remove_task_tasks()
+            return
+
+        if event.name == "run.proposal_ready":
+            stop_live()
+            _remove_task_tasks()
+            return
+
+        if event.name != "state.changed":
+            return
+
+        if event.state == "building_context":
+            _remove_context_task()
+            progress_state.context_task_id = progress.add_task(
+                "Analyzing codebase...",
+                total=None,
+            )
+            start_live()
+        elif event.state == "planning":
+            _remove_plan_task()
+            progress_state.plan_task_id = progress.add_task(
+                "Architect is streaming response...",
+                total=None,
+            )
+            start_live()
+        elif event.state == "executing":
+            _remove_plan_task()
+            _remove_task_tasks()
+            if isinstance(event.payload, StateChangedPayload):
+                task_index = event.payload.task_index
+                task_total = event.payload.task_total
+            else:
+                task_index = None
+                task_total = None
+            if task_index is not None and task_total is not None:
+                task_id = progress.add_task(
+                    f"Coder is streaming task {task_index}/{task_total}...",
+                    total=None,
+                )
+                progress_state.task_task_ids[task_index] = task_id
+                progress_state.task_chunk_counts[task_index] = 0
+                start_live()
+        elif event.state in {
+            "editing_plan",
+            "reviewing_diff",
+            "waiting_for_user",
+            "applying",
+            "committing",
+        }:
+            stop_live()
+            _remove_context_task()
+            _remove_plan_task()
+            _remove_task_tasks()
+
+    def on_plan_chunk(_chunk: str) -> None:
+        if progress_state.plan_task_id is None:
+            return
+        progress_state.plan_chunk_count += 1
+        progress.update(
+            progress_state.plan_task_id,
+            description=(
+                "Architect is streaming response... "
+                f"({progress_state.plan_chunk_count})"
+            ),
+        )
+        start_live()
+
+    def on_task_chunk(task_index: int, task_total: int, _chunk: str) -> None:
+        task_id = progress_state.task_task_ids.get(task_index)
+        if task_id is None:
+            return
+
+        progress_state.task_chunk_counts[task_index] += 1
+        progress.update(
+            task_id,
+            description=(
+                f"Coder is streaming task {task_index}/{task_total}... "
+                f"({progress_state.task_chunk_counts[task_index]} chunks)"
+            ),
+        )
+        start_live()
+
+    event_bus.subscribe(progress_subscriber)
+    event_bus.subscribe(CliEventRenderer(console_obj))
     event_bus.subscribe(
         LoggingEventSubscriber(
             build_event_logger(log_dir=Path(target_path) / ".code-orbit")
         )
     )
-
-    runtime: WorkflowRuntime | None = None
 
     try:
         config_result = Config.load_with_diagnostics(
@@ -59,39 +233,43 @@ async def run_workflow(
         )
         config = config_result.config
     except Exception as exc:
-        event_bus.publish(AgentEvent(
-            name="run.failed",
-            level="error",
-            state="loading_config",
-            message=str(exc),
-            payload=EmptyPayload(),
-        ))
+        event_bus.publish(
+            AgentEvent(
+                name="run.failed",
+                level="error",
+                state="loading_config",
+                message=str(exc),
+                payload=EmptyPayload(),
+            )
+        )
         console_obj.print(f"[bold red]Error loading config:[/bold red] {exc}")
         raise WorkflowError(str(exc)) from exc
 
     for message in config_result.messages:
-        event_bus.publish(AgentEvent(
-            name="config.message",
-            level=message.level,
-            state="loading_config",
-            message=message.text,
-            payload=ConfigMessagePayload(text=message.text),
-        ))
+        event_bus.publish(
+            AgentEvent(
+                name="config.message",
+                level=message.level,
+                state="loading_config",
+                message=message.text,
+                payload=ConfigMessagePayload(text=message.text),
+            )
+        )
 
     config = config.model_copy(
         update={
             "interactive": config.interactive and not no_interactive,
-            "auto_commit": config.auto_commit or auto_commit,
-            "allow_delete": config.allow_delete or allow_delete,
         }
     )
 
-    event_bus.publish(AgentEvent(
-        name="run.started",
-        state="starting",
-        message="Agent run started.",
-        payload=RunStartedPayload(target_dir=target_path, model=config.chat_model),
-    ))
+    event_bus.publish(
+        AgentEvent(
+            name="run.started",
+            state="starting",
+            message="Agent run started.",
+            payload=RunStartedPayload(target_dir=target_path, model=config.chat_model),
+        )
+    )
 
     console_obj.print(
         Panel.fit(
@@ -114,57 +292,23 @@ async def run_workflow(
         )
         return
 
-    runtime = WorkflowRuntime(
-        target_dir=target_path,
+    request = AgentRunRequest(
+        target_dir=Path(target_path),
         prompt=prompt,
-        config=config,
-        console=console_obj,
+        auto_commit=auto_commit,
+        allow_delete=allow_delete,
     )
-    try:
-        runtime.chat_adapter = await create_chat_adapter(config)
-    except Exception as exc:
-        event_bus.publish(AgentEvent(
-            name="run.failed",
-            level="error",
-            state="loading_chat",
-            message=str(exc),
-            payload=EmptyPayload(),
-        ))
-        raise WorkflowError(str(exc)) from exc
-    state = WorkflowState.BUILDING_CONTEXT
-    try:
-        while state not in {WorkflowState.COMPLETED, WorkflowState.FAILED}:
-            match state:
-                case WorkflowState.BUILDING_CONTEXT:
-                    state = await run_build_context_stage(runtime, event_bus)
-                case WorkflowState.PLANNING:
-                    state = await run_planning_stage(runtime, event_bus)
-                case WorkflowState.EDITING_PLAN:
-                    state = run_editing_plan_stage(runtime, event_bus)
-                case WorkflowState.EXECUTING:
-                    state = await run_execution_stage(runtime, event_bus)
-                case WorkflowState.REVIEWING_DIFF:
-                    state = run_review_diff_stage(runtime, event_bus)
-                case WorkflowState.APPLYING:
-                    state = run_applying_stage(runtime, event_bus)
-                case WorkflowState.COMMITTING:
-                    state = run_committing_stage(runtime, event_bus)
-                case _:
-                    state = WorkflowState.FAILED
 
-        if state == WorkflowState.COMPLETED:
-            event_bus.publish(AgentEvent(
-                name="run.completed",
-                state=WorkflowState.COMPLETED.value,
-                message="Agent run completed.",
-                payload=RunCompletedPayload(
-                    affected_count=len(runtime.affected_files),
-                ),
-            ))
-        elif state == WorkflowState.FAILED:
-            raise WorkflowError("Workflow failed.")
+    try:
+        result = await run_workflow_core(
+            request,
+            config=config,
+            event_bus=event_bus,
+            on_plan_chunk=on_plan_chunk,
+            on_task_chunk=on_task_chunk,
+        )
     finally:
-        if runtime is not None and runtime.plan_path is not None:
-            runtime.plan_path.unlink(missing_ok=True)
-        if runtime is not None and runtime.chat_adapter is not None:
-            await runtime.chat_adapter.aclose()
+        stop_live()
+
+    if result.status is AgentRunStatus.FAILED:
+        raise WorkflowError(result.error or "Workflow failed.")
