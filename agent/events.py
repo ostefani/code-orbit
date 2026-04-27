@@ -1,3 +1,4 @@
+import asyncio
 import copy
 import hashlib
 import json
@@ -139,6 +140,43 @@ class AgentEvent(Generic[PayloadT]):
 
 
 EventSubscriber = Callable[[AgentEvent[object]], None]
+
+
+class AsyncEventQueue:
+    """Async subscriber queue for programmatic consumers.
+
+    Events are enqueued with put_nowait so the synchronous publish loop is never
+    blocked. If the queue is full, the event is dropped silently.
+    """
+
+    def __init__(self, maxsize: int = 0) -> None:
+        self._queue: asyncio.Queue[AgentEvent[object] | None] = asyncio.Queue(maxsize)
+
+    def __call__(self, event: AgentEvent[object]) -> None:
+        try:
+            self._queue.put_nowait(event)
+        except asyncio.QueueFull:
+            pass
+
+    def close(self) -> None:
+        if self._queue.full():
+            try:
+                self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+        try:
+            self._queue.put_nowait(None)
+        except asyncio.QueueFull:
+            pass
+
+    def __aiter__(self) -> "AsyncEventQueue":
+        return self
+
+    async def __anext__(self) -> AgentEvent[object]:
+        item = await self._queue.get()
+        if item is None:
+            raise StopAsyncIteration
+        return item
 
 
 class EventBus:
