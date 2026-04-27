@@ -165,7 +165,7 @@ Tokens are counted using `tokenizer_backend: estimate`. If you want to learn mor
 
 ## Public API
 
-Code Orbit now exposes a small Python API for external runners and desktop front-ends.
+Code Orbit now exposes a small Python API for external runners and other Python consumers.
 
 ```python
 from pathlib import Path
