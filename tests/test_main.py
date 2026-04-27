@@ -1,12 +1,24 @@
 import asyncio
 import json
+from collections.abc import AsyncGenerator, Sequence
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
+from typing import ClassVar
 
 import pytest
 
-from agent.chat import ProviderRateLimitError, ProviderUnavailableError
+from agent.chat import (
+    AdapterCapabilities,
+    ChatAdapter,
+    ChatDelta,
+    ChatGenerationSettings,
+    ChatMessage,
+    ChatResponse,
+    ChatUsage,
+    ProviderRateLimitError,
+    ProviderUnavailableError,
+)
 from agent.config import Config
 from agent.events import AgentEvent, EventBus, PlanReadyPayload, RunProposalReadyPayload
 from agent.llm import CodeResponseSchema, PlanSchema, PlanTaskSchema, call_coder
@@ -665,7 +677,45 @@ def test_call_coder_streams_with_injected_adapter(monkeypatch) -> None:
 
     monkeypatch.setattr("agent.llm.stream_chat", fake_stream_chat)
 
-    adapter = object()
+    class DummyChatAdapter:
+        capabilities: ClassVar[AdapterCapabilities] = AdapterCapabilities(
+            chat=True,
+            streaming=True,
+            embeddings=False,
+            reranking=False,
+        )
+        context_window = 8192
+
+        async def complete(
+            self,
+            messages: Sequence[ChatMessage],
+            *,
+            generation: ChatGenerationSettings | None = None,
+        ) -> ChatResponse:
+            return ChatResponse(
+                content="complete",
+                finish_reason="stop",
+                usage=ChatUsage(input_tokens=1, output_tokens=1, total_tokens=2),
+            )
+
+        def stream(
+            self,
+            messages: Sequence[ChatMessage],
+            *,
+            generation: ChatGenerationSettings | None = None,
+        ) -> AsyncGenerator[ChatDelta, None]:
+            async def _stream():
+                yield ChatDelta(content="stream")
+
+            return _stream()
+
+        async def validate(self) -> None:
+            return None
+
+        async def aclose(self) -> None:
+            return None
+
+    adapter: ChatAdapter = DummyChatAdapter()
     result = asyncio.run(
         call_coder(
             plan,
