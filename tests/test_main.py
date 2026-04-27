@@ -227,6 +227,37 @@ def test_run_workflow_translates_failed_core_result(
         )
 
 
+def test_run_workflow_accepts_answered_core_result(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    async def fake_run_workflow_core(
+        request,
+        *,
+        config,
+        event_bus,
+        on_plan_chunk=None,
+        on_task_chunk=None,
+    ):
+        return AgentRunResult(
+            request=request,
+            status=AgentRunStatus.ANSWERED,
+            summary="Explanation",
+            answer="Nothing to change.",
+        )
+
+    monkeypatch.setattr("workflow.run_workflow_core", fake_run_workflow_core)
+
+    asyncio.run(
+        run_workflow(
+            target_dir=str(tmp_path),
+            prompt="Test prompt",
+            console=Console(file=StringIO()),
+        )
+    )
+
+
 def test_run_workflow_tree_mode_does_not_call_core(
     monkeypatch, tmp_path: Path
 ) -> None:
