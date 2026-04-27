@@ -6,7 +6,8 @@ from agent.config import Config
 from agent.events import EventBus
 from api import AgentRunRequest, AgentRunStatus
 from workflow.core import run_workflow_core
-from workflow._state import WorkflowState
+from workflow.editing import run_editing_plan_stage
+from workflow._state import WorkflowRuntime, WorkflowState
 
 
 class _DummyAdapter:
@@ -16,6 +17,33 @@ class _DummyAdapter:
     async def aclose(self) -> None:
         self.closed = True
         return None
+
+
+def test_run_editing_plan_stage_auto_approves_when_non_interactive(
+    monkeypatch, tmp_path
+) -> None:
+    plan = SimpleNamespace(summary="Ship it", tasks=[])
+    runtime = WorkflowRuntime(
+        target_dir=str(tmp_path),
+        prompt="Make it so",
+        config=Config(interactive=False),
+        plan_path=tmp_path / "plan.json",
+        architect_plan=plan,
+    )
+    events = []
+    bus = EventBus()
+    bus.subscribe(events.append)
+
+    def fail_open_editor(_plan_path):
+        raise AssertionError("non-interactive runs must not open the editor")
+
+    monkeypatch.setattr("workflow.editing.open_plan_in_editor", fail_open_editor)
+
+    state = run_editing_plan_stage(runtime, bus)
+
+    assert state is WorkflowState.EXECUTING
+    assert runtime.approved_plan is plan
+    assert events == []
 
 
 def test_run_workflow_core_returns_completed_result(monkeypatch) -> None:
