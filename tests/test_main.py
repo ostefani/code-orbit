@@ -69,7 +69,9 @@ def test_validate_llm_result_accepts_valid_changes() -> None:
         "summary": "Update files",
         "changes": [
             CodeChangeSchema(path="src/app.py", action="update", content="print('ok')"),
-            CodeChangeSchema(path="src/new.py", action="create", content="print('new')"),
+            CodeChangeSchema(
+                path="src/new.py", action="create", content="print('new')"
+            ),
             CodeChangeSchema(path="src/assets", action="mkdir"),
             CodeChangeSchema(path="src/copied.py", action="copy", src="src/app.py"),
             CodeChangeSchema(path="src/moved.py", action="move", src="src/old.py"),
@@ -130,6 +132,7 @@ def test_run_workflow_wraps_config_failures_as_workflow_error(
     monkeypatch, tmp_path: Path
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    output = StringIO()
 
     def fake_load_with_diagnostics(config_path, profile_name=None):
         raise ValueError("bad config")
@@ -144,9 +147,10 @@ def test_run_workflow_wraps_config_failures_as_workflow_error(
             run_workflow(
                 target_dir=str(tmp_path),
                 prompt="Test prompt",
-                console=Console(file=StringIO()),
+                console=Console(file=output),
             )
         )
+        assert "Nothing to change." in output.getvalue()
 
 
 def test_run_workflow_delegates_to_core_with_public_request(
@@ -239,9 +243,7 @@ def test_run_workflow_translates_failed_core_result(
         )
 
 
-def test_run_workflow_accepts_answered_core_result(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_run_workflow_accepts_answered_core_result(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.chdir(tmp_path)
 
     async def fake_run_workflow_core(
@@ -270,9 +272,7 @@ def test_run_workflow_accepts_answered_core_result(
     )
 
 
-def test_run_workflow_tree_mode_does_not_call_core(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_run_workflow_tree_mode_does_not_call_core(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.chdir(tmp_path)
     published_events = []
 
@@ -512,9 +512,7 @@ def test_call_coder_retries_invalid_json_response(monkeypatch) -> None:
 
     assert result.summary == "Recovered"
     assert len(seen_messages) == 2
-    assert seen_messages[1][1].startswith(
-        "<codebase />\n\n<approved_plan_summary>"
-    )
+    assert seen_messages[1][1].startswith("<codebase />\n\n<approved_plan_summary>")
     assert "not valid JSON" in seen_messages[1][1]
 
 
@@ -779,7 +777,9 @@ def test_history_loads_legacy_file_on_first_run(monkeypatch, tmp_path: Path) -> 
 
 
 def test_build_working_context_appends_applied_changes() -> None:
-    base_context = "<codebase>\n<file path=\"src/app.py\">\nprint('old')\n</file>\n</codebase>"
+    base_context = (
+        "<codebase>\n<file path=\"src/app.py\">\nprint('old')\n</file>\n</codebase>"
+    )
     changes = [
         CodeChangeSchema(
             path="src/new.py",
