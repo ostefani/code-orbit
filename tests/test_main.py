@@ -8,7 +8,7 @@ import pytest
 
 from agent.chat import ProviderRateLimitError, ProviderUnavailableError
 from agent.config import Config
-from agent.events import AgentEvent, EventBus, RunProposalReadyPayload
+from agent.events import AgentEvent, EventBus, PlanReadyPayload, RunProposalReadyPayload
 from agent.llm import CodeResponseSchema, PlanSchema, PlanTaskSchema, call_coder
 from agent.schemas import CodeChangeSchema
 from api import AgentRunResult, AgentRunStatus
@@ -168,6 +168,18 @@ def test_run_workflow_delegates_to_core_with_public_request(
         seen["event_bus"] = event_bus
         assert on_plan_chunk is not None
         assert on_task_chunk is not None
+        on_plan_chunk("plan")
+        event_bus.emit(
+            "plan.ready",
+            PlanReadyPayload(summary="Plan", task_count=1, draft_path="plan.json"),
+            state="reviewing_plan",
+        )
+        on_task_chunk(1, 1, "task")
+        event_bus.emit(
+            "run.proposal_ready",
+            RunProposalReadyPayload(summary="Done", change_count=1),
+            state="validated",
+        )
         return AgentRunResult(
             request=request,
             status=AgentRunStatus.COMPLETED,

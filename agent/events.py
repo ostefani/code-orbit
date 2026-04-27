@@ -33,7 +33,8 @@ class RunStartedPayload:
 
 @dataclass(frozen=True)
 class StateChangedPayload:
-    pass
+    task_index: int | None = None
+    task_total: int | None = None
 
 
 @dataclass(frozen=True)
@@ -90,6 +91,15 @@ class PlanReadyPayload:
 class RunProposalReadyPayload:
     summary: str
     change_count: int
+
+
+@dataclass(frozen=True)
+class TaskCompletedPayload:
+    task_index: int
+    task_total: int
+    summary: str
+    change_count: int
+    goal: str
 
 
 @dataclass(frozen=True)

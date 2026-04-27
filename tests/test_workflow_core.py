@@ -222,6 +222,19 @@ def test_run_execution_stage_emits_one_state_change_per_task(monkeypatch, tmp_pa
         "Generating file replacements for task 1/2.",
         "Generating file replacements for task 2/2.",
     ]
+    assert [
+        (event.payload.task_index, event.payload.task_total)
+        for event in executing_events
+    ] == [(1, 2), (2, 2)]
+    task_completed_events = [
+        event for event in events
+        if event.name == "task.completed" and event.state == "executing"
+    ]
+    assert [event.payload.summary for event in task_completed_events] == [
+        "Done Task 1",
+        "Done Task 2",
+    ]
+    assert [event.payload.change_count for event in task_completed_events] == [1, 1]
 
 
 def test_run_workflow_core_returns_answered_result(monkeypatch) -> None:

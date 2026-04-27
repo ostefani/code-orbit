@@ -7,6 +7,7 @@ from agent.events import (
     EventBus,
     RunProposalReadyPayload,
     StateChangedPayload,
+    TaskCompletedPayload,
 )
 from agent.llm import CodeResponseSchema, call_coder_for_task
 from agent.schemas import CodeChangeSchema
@@ -187,7 +188,10 @@ async def run_execution_stage(
                 f"Generating file replacements for task {index}/"
                 f"{task_total}."
             ),
-            payload=StateChangedPayload(),
+            payload=StateChangedPayload(
+                task_index=index,
+                task_total=task_total,
+            ),
         ))
         try:
             task_chunk_callback = None
@@ -225,6 +229,18 @@ async def run_execution_stage(
             runtime.context_result.context,
             runtime.all_changes,
         )
+        event_bus.publish(AgentEvent(
+            name="task.completed",
+            state=WorkflowState.EXECUTING.value,
+            message=summary or f"Task {index}/{task_total} completed.",
+            payload=TaskCompletedPayload(
+                task_index=index,
+                task_total=task_total,
+                summary=summary or "Completed.",
+                change_count=len(changes),
+                goal=task.goal,
+            ),
+        ))
 
     if not runtime.all_changes:
         event_bus.publish(AgentEvent(

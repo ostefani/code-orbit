@@ -11,6 +11,7 @@ from agent.events import (
     EmptyPayload,
     EventBus,
     LoggingEventSubscriber,
+    StateChangedPayload,
     build_event_logger,
 )
 from api import AgentRunRequest, AgentRunStatus
@@ -114,58 +115,82 @@ async def run_workflow(
         progress_state.task_chunk_counts.clear()
 
     def progress_subscriber(event: AgentEvent[object]) -> None:
-        if (
-            event.name == "state.changed"
-            and event.state
-            in {
-                "editing_plan",
-                "reviewing_diff",
-                "waiting_for_user",
-                "applying",
-                "committing",
-            }
-        ) or event.name in {
-            "plan.ready",
-            "run.proposal_ready",
-            "run.completed",
-            "run.failed",
-        }:
+        if event.name == "plan.ready":
             stop_live()
+            _remove_plan_task()
+            return
+
+        if event.name == "task.completed":
+            stop_live()
+            _remove_task_tasks()
+            return
+
+        if event.name == "run.proposal_ready":
+            stop_live()
+            _remove_task_tasks()
+            return
+
+        if event.name in {"run.completed", "run.failed"}:
+            stop_live()
+            _remove_plan_task()
+            _remove_task_tasks()
+            return
 
         if event.name != "state.changed":
             return
 
         if event.state == "planning":
             _remove_plan_task()
-        elif event.state == "executing":
-            _remove_task_tasks()
-
-    def on_plan_chunk(_chunk: str) -> None:
-        start_live()
-        if progress_state.plan_task_id is None:
             progress_state.plan_task_id = progress.add_task(
                 "Architect is streaming response...",
                 total=None,
             )
+            start_live()
+        elif event.state == "executing":
+            _remove_plan_task()
+            _remove_task_tasks()
+            if isinstance(event.payload, StateChangedPayload):
+                task_index = event.payload.task_index
+                task_total = event.payload.task_total
+            else:
+                task_index = None
+                task_total = None
+            if task_index is not None and task_total is not None:
+                task_id = progress.add_task(
+                    f"Coder is streaming task {task_index}/{task_total}...",
+                    total=None,
+                )
+                progress_state.task_task_ids[task_index] = task_id
+                progress_state.task_chunk_counts[task_index] = 0
+                start_live()
+        elif event.state in {
+            "editing_plan",
+            "reviewing_diff",
+            "waiting_for_user",
+            "applying",
+            "committing",
+        }:
+            stop_live()
+            _remove_plan_task()
+            _remove_task_tasks()
+
+    def on_plan_chunk(_chunk: str) -> None:
+        if progress_state.plan_task_id is None:
+            return
         progress_state.plan_chunk_count += 1
         progress.update(
             progress_state.plan_task_id,
             description=(
                 "Architect is streaming response... "
-                f"({progress_state.plan_chunk_count} chunks)"
+                f"({progress_state.plan_chunk_count})"
             ),
         )
+        start_live()
 
     def on_task_chunk(task_index: int, task_total: int, _chunk: str) -> None:
-        start_live()
         task_id = progress_state.task_task_ids.get(task_index)
         if task_id is None:
-            task_id = progress.add_task(
-                f"Coder is streaming task {task_index}/{task_total}...",
-                total=None,
-            )
-            progress_state.task_task_ids[task_index] = task_id
-            progress_state.task_chunk_counts[task_index] = 0
+            return
 
         progress_state.task_chunk_counts[task_index] += 1
         progress.update(
@@ -175,6 +200,7 @@ async def run_workflow(
                 f"({progress_state.task_chunk_counts[task_index]} chunks)"
             ),
         )
+        start_live()
 
     event_bus.subscribe(progress_subscriber)
     event_bus.subscribe(CliEventRenderer(console_obj))
