@@ -310,5 +310,15 @@ async def run_workflow(
     finally:
         stop_live()
 
+    if result.status is AgentRunStatus.ANSWERED:
+        console_obj.print(
+            Panel(
+                result.answer or "",
+                title="Answer",
+                border_style="green",
+            )
+        )
+        return
+
     if result.status is AgentRunStatus.FAILED:
         raise WorkflowError(result.error or "Workflow failed.")
