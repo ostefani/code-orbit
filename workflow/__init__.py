@@ -19,12 +19,13 @@ from api import AgentRunRequest, AgentRunStatus
 
 from .core import run_workflow_core
 from .errors import WorkflowError
+from .hooks import WorkflowHooks
 
 if TYPE_CHECKING:
     from agent.llm import PlanSchema
     from rich.console import Console
 
-__all__ = ["run_workflow", "WorkflowError"]
+__all__ = ["run_workflow", "run_workflow_core", "WorkflowError", "WorkflowHooks"]
 
 
 def format_plan_for_display(plan: "PlanSchema") -> str:

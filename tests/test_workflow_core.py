@@ -10,6 +10,7 @@ from workflow.core import run_workflow_core
 from workflow.context import run_build_context_stage
 from workflow.editing import run_editing_plan_stage
 from workflow.execution import run_execution_stage
+from workflow.hooks import WorkflowHooks
 from workflow.output import run_review_diff_stage
 from workflow.planning import run_planning_stage
 from workflow._state import WorkflowRuntime, WorkflowState
@@ -24,9 +25,7 @@ class _DummyAdapter:
         return None
 
 
-def test_run_editing_plan_stage_opens_editor_even_when_non_interactive(
-    monkeypatch, tmp_path
-) -> None:
+def test_run_editing_plan_stage_opens_editor_even_when_non_interactive(tmp_path) -> None:
     plan = SimpleNamespace(summary="Ship it", tasks=[])
     approved_plan = SimpleNamespace(summary="Approved", tasks=[])
     runtime = WorkflowRuntime(
@@ -44,14 +43,45 @@ def test_run_editing_plan_stage_opens_editor_even_when_non_interactive(
         assert plan_path == tmp_path / "plan.json"
         return approved_plan
 
-    monkeypatch.setattr("workflow.editing.open_plan_in_editor", fake_open_editor)
-
-    state = run_editing_plan_stage(runtime, bus)
+    state = run_editing_plan_stage(
+        runtime,
+        bus,
+        open_plan_in_editor=fake_open_editor,
+    )
 
     assert state is WorkflowState.EXECUTING
     assert runtime.approved_plan is approved_plan
     assert [event.state for event in events if event.name == "state.changed"] == [
         "editing_plan"
+    ]
+
+
+def test_run_editing_plan_stage_returns_failed_when_editor_fails(tmp_path) -> None:
+    runtime = WorkflowRuntime(
+        target_dir=str(tmp_path),
+        prompt="Make it so",
+        config=Config(interactive=False),
+        plan_path=tmp_path / "plan.json",
+        architect_plan=SimpleNamespace(summary="Ship it", tasks=[]),
+    )
+    events = []
+    bus = EventBus()
+    bus.subscribe(events.append)
+
+    def fake_open_editor(_plan_path):
+        raise RuntimeError("editing aborted")
+
+    state = run_editing_plan_stage(
+        runtime,
+        bus,
+        open_plan_in_editor=fake_open_editor,
+    )
+
+    assert state is WorkflowState.FAILED
+    assert runtime.approved_plan is None
+    assert [(event.name, event.state) for event in events] == [
+        ("state.changed", "editing_plan"),
+        ("run.failed", "editing_plan"),
     ]
 
 
@@ -155,7 +185,7 @@ def test_run_workflow_core_returns_completed_result(monkeypatch) -> None:
         runtime.plan_path = Path("/tmp/plan.json")
         return WorkflowState.EDITING_PLAN
 
-    def fake_editing(_runtime, _event_bus):
+    def fake_editing(_runtime, _event_bus, **_kwargs):
         return WorkflowState.EXECUTING
 
     async def fake_execution(runtime, _event_bus, on_chunk=None):
@@ -167,7 +197,7 @@ def test_run_workflow_core_returns_completed_result(monkeypatch) -> None:
         runtime.affected_files = ["src/app.py"]
         return WorkflowState.REVIEWING_DIFF
 
-    def fake_review(_runtime, _event_bus):
+    def fake_review(_runtime, _event_bus, **_kwargs):
         return WorkflowState.APPLYING
 
     def fake_applying(runtime, _event_bus):
@@ -178,7 +208,6 @@ def test_run_workflow_core_returns_completed_result(monkeypatch) -> None:
     def fake_committing(_runtime, _event_bus):
         return WorkflowState.COMPLETED
 
-    monkeypatch.setattr("workflow.core.create_chat_adapter", fake_create_chat_adapter)
     monkeypatch.setattr("workflow.core.run_build_context_stage", fake_build_context)
     monkeypatch.setattr("workflow.core.run_planning_stage", fake_plan)
     monkeypatch.setattr("workflow.core.run_editing_plan_stage", fake_editing)
@@ -196,6 +225,7 @@ def test_run_workflow_core_returns_completed_result(monkeypatch) -> None:
             request,
             config=config,
             event_bus=bus,
+            hooks=WorkflowHooks(create_chat_adapter=fake_create_chat_adapter),
             on_plan_chunk=plan_callback,
             on_task_chunk=lambda task_index, task_total, chunk: task_chunks.append(
                 (task_index, task_total, chunk)
@@ -216,6 +246,81 @@ def test_run_workflow_core_returns_completed_result(monkeypatch) -> None:
     assert result.summary == "Ship it"
     assert result.affected_files == ["src/app.py"]
     assert [event.name for event in events] == ["run.completed"]
+
+
+def test_run_workflow_core_threads_hooks_into_interactive_stages(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    request = AgentRunRequest(target_dir="/tmp/project", prompt="Make it so")
+    adapter = _DummyAdapter()
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text("{}", encoding="utf-8")
+    approved_plan = SimpleNamespace(
+        summary="Ship it",
+        tasks=[SimpleNamespace(goal="Task", files=["src/app.py"], reasoning="why")],
+    )
+    opened_paths = []
+    confirm_calls = []
+
+    async def fake_create_chat_adapter(_config):
+        return adapter
+
+    async def fake_build_context(runtime, _event_bus):
+        runtime.context_result = SimpleNamespace(context="context")
+        return WorkflowState.PLANNING
+
+    async def fake_plan(runtime, _event_bus, on_chunk=None):
+        runtime.architect_plan = approved_plan
+        runtime.plan_path = plan_path
+        return WorkflowState.EDITING_PLAN
+
+    def fake_open_editor(path):
+        opened_paths.append(path)
+        return approved_plan
+
+    async def fake_execution(runtime, _event_bus, on_chunk=None):
+        runtime.all_changes = [
+            CodeChangeSchema(path="src/app.py", action="update", content="x")
+        ]
+        runtime.final_summary = "Ship it"
+        return WorkflowState.REVIEWING_DIFF
+
+    def fake_confirm(*args, **kwargs):
+        confirm_calls.append((args, kwargs))
+        return True
+
+    def fake_applying(runtime, _event_bus):
+        runtime.affected_files = ["src/app.py"]
+        return WorkflowState.COMPLETED
+
+    monkeypatch.setattr("workflow.core.run_build_context_stage", fake_build_context)
+    monkeypatch.setattr("workflow.core.run_planning_stage", fake_plan)
+    monkeypatch.setattr("workflow.core.run_execution_stage", fake_execution)
+    monkeypatch.setattr("workflow.core.run_applying_stage", fake_applying)
+    monkeypatch.setattr(
+        "workflow.output.preview_changes",
+        lambda *_args, **_kwargs: None,
+    )
+
+    result = asyncio.run(
+        run_workflow_core(
+            request,
+            config=Config(interactive=True),
+            event_bus=EventBus(),
+            hooks=WorkflowHooks(
+                create_chat_adapter=fake_create_chat_adapter,
+                open_plan_in_editor=fake_open_editor,
+                confirm_apply_changes=fake_confirm,
+            ),
+        )
+    )
+
+    assert result.status is AgentRunStatus.COMPLETED
+    assert opened_paths == [plan_path]
+    assert confirm_calls == [(("Apply these changes?",), {"default": True})]
+    assert not plan_path.exists()
+    assert adapter.closed is True
 
 
 def test_run_execution_stage_emits_one_state_change_per_task(monkeypatch, tmp_path) -> None:
@@ -282,7 +387,10 @@ def test_run_execution_stage_emits_one_state_change_per_task(monkeypatch, tmp_pa
     assert [event.payload.change_count for event in task_completed_events] == [1, 1]
 
 
-def test_run_review_diff_stage_uses_rich_confirm_prompt(monkeypatch, tmp_path) -> None:
+def test_run_review_diff_stage_uses_injected_confirm_prompt(
+    monkeypatch,
+    tmp_path,
+) -> None:
     runtime = WorkflowRuntime(
         target_dir=str(tmp_path),
         prompt="Make it so",
@@ -294,14 +402,20 @@ def test_run_review_diff_stage_uses_rich_confirm_prompt(monkeypatch, tmp_path) -
     bus = EventBus()
     bus.subscribe(events.append)
 
-    monkeypatch.setattr("workflow.output.preview_changes", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("workflow.output.Confirm.ask", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        "workflow.output.preview_changes",
+        lambda *_args, **_kwargs: None,
+    )
     monkeypatch.setattr(
         "builtins.input",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("input() must not be used")),
     )
 
-    state = run_review_diff_stage(runtime, bus)
+    state = run_review_diff_stage(
+        runtime,
+        bus,
+        confirm_apply_changes=lambda *_args, **_kwargs: False,
+    )
 
     assert state is WorkflowState.EDITING_PLAN
     assert runtime.all_changes == []
@@ -323,9 +437,14 @@ def test_run_review_diff_stage_treats_eof_as_decline(monkeypatch, tmp_path) -> N
     runtime.all_changes = [CodeChangeSchema(path="src/app.py", action="update", content="x")]
 
     monkeypatch.setattr("workflow.output.preview_changes", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("workflow.output.Confirm.ask", lambda *_args, **_kwargs: (_ for _ in ()).throw(EOFError))
 
-    state = run_review_diff_stage(runtime, EventBus())
+    state = run_review_diff_stage(
+        runtime,
+        EventBus(),
+        confirm_apply_changes=lambda *_args, **_kwargs: (
+            _ for _ in ()
+        ).throw(EOFError),
+    )
 
     assert state is WorkflowState.EDITING_PLAN
 
@@ -355,7 +474,6 @@ def test_run_workflow_core_uses_plan_summary_when_execution_has_no_changes(
         runtime.final_summary = None
         return WorkflowState.COMPLETED
 
-    monkeypatch.setattr("workflow.core.create_chat_adapter", fake_create_chat_adapter)
     monkeypatch.setattr("workflow.core.run_build_context_stage", fake_build_context)
     monkeypatch.setattr("workflow.core.run_planning_stage", fake_plan)
     monkeypatch.setattr("workflow.core.run_execution_stage", fake_execution)
@@ -365,6 +483,7 @@ def test_run_workflow_core_uses_plan_summary_when_execution_has_no_changes(
             request,
             config=Config(interactive=False),
             event_bus=EventBus(),
+            hooks=WorkflowHooks(create_chat_adapter=fake_create_chat_adapter),
         )
     )
 
@@ -397,7 +516,6 @@ def test_run_workflow_core_returns_answered_result(monkeypatch) -> None:
         runtime.approved_plan = runtime.architect_plan
         return WorkflowState.COMPLETED
 
-    monkeypatch.setattr("workflow.core.create_chat_adapter", fake_create_chat_adapter)
     monkeypatch.setattr("workflow.core.run_build_context_stage", fake_build_context)
     monkeypatch.setattr("workflow.core.run_planning_stage", fake_plan)
 
@@ -406,6 +524,7 @@ def test_run_workflow_core_returns_answered_result(monkeypatch) -> None:
             request,
             config=Config(interactive=False),
             event_bus=bus,
+            hooks=WorkflowHooks(create_chat_adapter=fake_create_chat_adapter),
         )
     )
 
@@ -424,13 +543,12 @@ def test_run_workflow_core_returns_failed_result(monkeypatch) -> None:
     async def fake_create_chat_adapter(_config):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr("workflow.core.create_chat_adapter", fake_create_chat_adapter)
-
     result = asyncio.run(
         run_workflow_core(
             request,
             config=Config(interactive=False),
             event_bus=bus,
+            hooks=WorkflowHooks(create_chat_adapter=fake_create_chat_adapter),
             on_plan_chunk=None,
             on_task_chunk=None,
         )
@@ -454,13 +572,12 @@ def test_run_workflow_core_merges_request_flags(monkeypatch) -> None:
         seen_config = _config
         raise RuntimeError("stop")
 
-    monkeypatch.setattr("workflow.core.create_chat_adapter", fake_create_chat_adapter)
-
     result = asyncio.run(
         run_workflow_core(
             request,
             config=Config(interactive=False, auto_commit=False, allow_delete=False),
             event_bus=EventBus(),
+            hooks=WorkflowHooks(create_chat_adapter=fake_create_chat_adapter),
         )
     )
 
@@ -480,7 +597,6 @@ def test_run_workflow_core_returns_failed_result_for_failed_state(monkeypatch) -
     async def fake_build_context(_runtime, _event_bus):
         return WorkflowState.FAILED
 
-    monkeypatch.setattr("workflow.core.create_chat_adapter", fake_create_chat_adapter)
     monkeypatch.setattr("workflow.core.run_build_context_stage", fake_build_context)
 
     result = asyncio.run(
@@ -488,6 +604,7 @@ def test_run_workflow_core_returns_failed_result_for_failed_state(monkeypatch) -
             request,
             config=Config(interactive=False),
             event_bus=EventBus(),
+            hooks=WorkflowHooks(create_chat_adapter=fake_create_chat_adapter),
         )
     )
 
@@ -509,7 +626,6 @@ def test_run_workflow_core_returns_failed_result_for_stage_exception(monkeypatch
     async def fake_build_context(_runtime, _event_bus):
         raise RuntimeError("context exploded")
 
-    monkeypatch.setattr("workflow.core.create_chat_adapter", fake_create_chat_adapter)
     monkeypatch.setattr("workflow.core.run_build_context_stage", fake_build_context)
 
     result = asyncio.run(
@@ -517,6 +633,7 @@ def test_run_workflow_core_returns_failed_result_for_stage_exception(monkeypatch
             request,
             config=Config(interactive=False),
             event_bus=bus,
+            hooks=WorkflowHooks(create_chat_adapter=fake_create_chat_adapter),
         )
     )
 
@@ -539,7 +656,6 @@ def test_run_workflow_core_cleans_up_plan_path(monkeypatch, tmp_path) -> None:
         runtime.plan_path = plan_path
         raise RuntimeError("boom")
 
-    monkeypatch.setattr("workflow.core.create_chat_adapter", fake_create_chat_adapter)
     monkeypatch.setattr("workflow.core.run_build_context_stage", fake_build_context)
 
     result = asyncio.run(
@@ -547,6 +663,7 @@ def test_run_workflow_core_cleans_up_plan_path(monkeypatch, tmp_path) -> None:
             request,
             config=Config(interactive=False),
             event_bus=EventBus(),
+            hooks=WorkflowHooks(create_chat_adapter=fake_create_chat_adapter),
         )
     )
 
