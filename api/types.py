@@ -19,13 +19,14 @@ class AgentRunStatus(str, Enum):
 
 
 class AgentRunRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     run_id: str = Field(default_factory=lambda: str(uuid4()))
     target_dir: Path
     prompt: str
     auto_commit: bool = False
     allow_delete: bool = False
+    conversation_context: dict[str, Any] | None = None
 
     @model_validator(mode="before")
     @classmethod

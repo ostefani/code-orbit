@@ -2,12 +2,12 @@ import os
 import shlex
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from agent.events import AgentEvent, EmptyPayload, EventBus, StateChangedPayload
 
-from .errors import WorkflowError
 from ._state import WorkflowRuntime, WorkflowState
 from .planning import load_plan_draft
 
@@ -43,8 +43,14 @@ def open_plan_in_editor(plan_path: Path) -> "PlanSchema":
                 raise
 
 
+_default_open_plan_in_editor = open_plan_in_editor
+
+
 def run_editing_plan_stage(
-    runtime: WorkflowRuntime, event_bus: EventBus
+    runtime: WorkflowRuntime,
+    event_bus: EventBus,
+    *,
+    open_plan_in_editor: Callable[[Path], "PlanSchema"] = _default_open_plan_in_editor,
 ) -> WorkflowState:
     assert runtime.plan_path is not None
     assert runtime.architect_plan is not None
@@ -65,5 +71,5 @@ def run_editing_plan_stage(
             message=str(exc),
             payload=EmptyPayload(),
         ))
-        raise WorkflowError(str(exc)) from exc
+        return WorkflowState.FAILED
     return WorkflowState.EXECUTING
