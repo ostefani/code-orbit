@@ -32,6 +32,20 @@ from workflow.editing import open_plan_in_editor
 from workflow.execution import build_working_context, validate_llm_result
 
 
+def coder_markup_response(
+    summary: str = "Recovered",
+    changes: str = "",
+) -> str:
+    return (
+        "<code_response>\n"
+        f"<summary>{summary}</summary>\n"
+        "<changes>\n"
+        f"{changes}"
+        "</changes>\n"
+        "</code_response>"
+    )
+
+
 def test_config_rejects_impossible_context_budget() -> None:
     try:
         Config(max_context_tokens=1024, max_response_tokens=1024)
@@ -489,7 +503,7 @@ def test_call_coder_rejects_multi_task_plans() -> None:
         asyncio.run(call_coder(plan, "<codebase />", Config()))
 
 
-def test_call_coder_retries_invalid_json_response(monkeypatch) -> None:
+def test_call_coder_retries_invalid_structured_response(monkeypatch) -> None:
     plan = PlanSchema(
         summary="Recover from malformed JSON",
         tasks=[
@@ -503,7 +517,7 @@ def test_call_coder_retries_invalid_json_response(monkeypatch) -> None:
     responses = iter(
         [
             "not-json",
-            CodeResponseSchema(summary="Recovered", changes=[]).model_dump_json(),
+            coder_markup_response(),
         ]
     )
     seen_messages: list[tuple[str, ...]] = []
@@ -525,7 +539,53 @@ def test_call_coder_retries_invalid_json_response(monkeypatch) -> None:
     assert result.summary == "Recovered"
     assert len(seen_messages) == 2
     assert seen_messages[1][1].startswith("<codebase />\n\n<approved_plan_summary>")
-    assert "not valid JSON" in seen_messages[1][1]
+    assert "required structured format" in seen_messages[1][1]
+    assert "<code_response>" in seen_messages[1][1]
+
+
+def test_call_coder_parses_raw_file_content_without_json_escaping(monkeypatch) -> None:
+    plan = PlanSchema(
+        summary="Recover from malformed JSON",
+        tasks=[
+            PlanTaskSchema(
+                files=["src/app.py"],
+                goal="Update the CLI entry point",
+                reasoning="The entry point needs the first change.",
+            )
+        ],
+    )
+    raw_content = 'print("hello")\nhtml = "<main>ok</main>"\n'
+    response = coder_markup_response(
+        summary="Updated app",
+        changes=(
+            '<change action="update" path="src/app.py">\n'
+            "<content>\n"
+            f"{raw_content}"
+            "</content>\n"
+            "</change>\n"
+        ),
+    )
+    generations: list[ChatGenerationSettings | None] = []
+
+    async def fake_run_chat(messages, config, adapter=None, generation=None):
+        generations.append(generation)
+        return SimpleNamespace(content=response)
+
+    monkeypatch.setattr("agent.llm.run_chat", fake_run_chat)
+
+    result = asyncio.run(
+        call_coder(
+            plan,
+            "<codebase />",
+            Config(chat_streaming=False),
+        )
+    )
+
+    assert result.summary == "Updated app"
+    assert result.changes[0].path == "src/app.py"
+    assert result.changes[0].content == raw_content
+    assert generations[0] is not None
+    assert generations[0].response_format is None
 
 
 def test_call_coder_retries_empty_response(monkeypatch) -> None:
@@ -542,7 +602,7 @@ def test_call_coder_retries_empty_response(monkeypatch) -> None:
     responses = iter(
         [
             "",
-            CodeResponseSchema(summary="Recovered", changes=[]).model_dump_json(),
+            coder_markup_response(),
         ]
     )
 
@@ -577,10 +637,7 @@ def test_call_coder_retries_transient_provider_error(monkeypatch) -> None:
         [
             ProviderUnavailableError("openai", "temporary outage"),
             SimpleNamespace(
-                content=CodeResponseSchema(
-                    summary="Recovered",
-                    changes=[],
-                ).model_dump_json()
+                content=coder_markup_response()
             ),
         ]
     )
@@ -624,10 +681,7 @@ def test_call_coder_retries_rate_limit_with_backoff(monkeypatch) -> None:
         [
             ProviderRateLimitError("openai", "too many requests"),
             SimpleNamespace(
-                content=CodeResponseSchema(
-                    summary="Recovered",
-                    changes=[],
-                ).model_dump_json()
+                content=coder_markup_response()
             ),
         ]
     )
@@ -673,7 +727,7 @@ def test_call_coder_streams_with_injected_adapter(monkeypatch) -> None:
 
     async def fake_stream_chat(messages, config, adapter=None, generation=None):
         seen_adapters.append(adapter)
-        yield SimpleNamespace(content='{"summary":"ok","changes":[]}')  # type: ignore[misc]
+        yield SimpleNamespace(content=coder_markup_response(summary="ok"))  # type: ignore[misc]
 
     monkeypatch.setattr("agent.llm.stream_chat", fake_stream_chat)
 
@@ -728,7 +782,7 @@ def test_call_coder_streams_with_injected_adapter(monkeypatch) -> None:
 
     assert result.summary == "ok"
     assert seen_adapters == [adapter]
-    assert chunks == ['{"summary":"ok","changes":[]}']
+    assert chunks == [coder_markup_response(summary="ok")]
 
 
 def test_handle_task_failure_returns_next_state() -> None:
