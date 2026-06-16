@@ -284,7 +284,8 @@ _CHANGE_RE = re.compile(
     r"<change\b(?P<attrs>[^>]*)>(?P<body>.*?)</change>",
     re.DOTALL,
 )
-_CONTENT_RE = re.compile(r"<content>\n?(?P<content>.*?)\n?</content>", re.DOTALL)
+
+_CONTENT_RE = re.compile(r"<content>\n(?P<content>.*?\n)</content>", re.DOTALL)
 _ATTR_RE = re.compile(r'(?P<name>[a-zA-Z_][\w-]*)="(?P<value>[^"]*)"')
 
 
