@@ -64,6 +64,7 @@ source .venv/bin/activate
 
 # 3. Install dependencies
 pip install -r requirements.txt
+python3.14 -m pip install -r requirements.txt
 
 # 4. Start llama.cpp server (in a separate terminal)
 llama-server \
