@@ -1,5 +1,7 @@
 import asyncio
+import html
 from collections.abc import Callable
+import re
 from typing import TypeVar
 
 from pydantic import (
@@ -74,19 +76,20 @@ task from that plan. Your job is to produce exact file replacements only for
 that task.
 
 RULES:
-1. Return ONLY a valid JSON object - no markdown, no explanation, no backticks.
-2. The JSON must follow this exact schema:
-   {
-     "summary": "One sentence describing what you did.",
-     "changes": [
-       {
-         "path": "relative/path/to/file.py",
-         "action": "update" | "create" | "delete" | "mkdir" | "copy" | "move",
-         "content": "full new file content as a string (create/update only)",
-         "src": "source path (copy/move only)"
-       }
-     ]
-   }
+1. Return ONLY the tagged response format shown below - no markdown fences, no
+   JSON, no explanation outside the tags.
+2. The response must follow this exact structure:
+   <code_response>
+   <summary>One sentence describing what you did.</summary>
+   <changes>
+   <change action="update" path="relative/path/to/file.py">
+   <content>
+   full new file content for create/update actions only
+   </content>
+   </change>
+   <change action="copy" path="relative/path/to/new.py" src="relative/path/to/source.py"></change>
+   </changes>
+   </code_response>
 3. Action rules:
    - create/update: always provide COMPLETE file content in "content". No "src".
      The "create" action automatically creates any missing parent directories;
@@ -180,7 +183,7 @@ async def _call_structured_llm(
     generation = ChatGenerationSettings(
         max_tokens=config.max_response_tokens,
         temperature=config.structured_llm_temperature,
-        response_format="json_object",
+        response_format="json_object" if parser is not parse_code_response_markup else None,
     )
     retryable_attempts = config.structured_llm_retries
     messages = base_messages
@@ -201,7 +204,7 @@ async def _call_structured_llm(
         except EmptyLLMResponseError:
             if attempt >= retryable_attempts:
                 raise
-        except ValidationError as exc:
+        except (ValidationError, ValueError) as exc:
             if attempt >= retryable_attempts:
                 raise ValueError(
                     f"Invalid structured response from model: {exc}"
@@ -210,7 +213,11 @@ async def _call_structured_llm(
                 base_messages[0],
                 ChatMessage(
                     role="user",
-                    content=_build_structured_llm_retry_message(user_message, exc),
+                    content=_build_structured_llm_retry_message(
+                        user_message,
+                        exc,
+                        parser=parser,
+                    ),
                 ),
             )
         except ProviderError as exc:
@@ -255,13 +262,67 @@ async def _get_structured_llm_content(
 
 def _build_structured_llm_retry_message(
     user_message: str,
-    exc: ValidationError,
+    exc: Exception,
+    *,
+    parser: Callable[[str], BaseModel],
 ) -> str:
+    format_instruction = (
+        "Return ONLY a valid JSON object that matches the schema."
+        if parser is not parse_code_response_markup
+        else "Return ONLY the tagged <code_response> format that matches the schema."
+    )
     return (
         f"{user_message}\n\n"
-        "Your previous response was not valid JSON.\n"
+        "Your previous response did not match the required structured format.\n"
         f"Parser error: {exc}\n"
-        "Return ONLY a valid JSON object that matches the schema."
+        f"{format_instruction}"
+    )
+
+
+_SUMMARY_RE = re.compile(r"<summary>(?P<summary>.*?)</summary>", re.DOTALL)
+_CHANGE_RE = re.compile(
+    r"<change\b(?P<attrs>[^>]*)>(?P<body>.*?)</change>",
+    re.DOTALL,
+)
+
+_CONTENT_RE = re.compile(r"<content>\n(?P<content>.*?\n)</content>", re.DOTALL)
+_ATTR_RE = re.compile(r'(?P<name>[a-zA-Z_][\w-]*)="(?P<value>[^"]*)"')
+
+
+def parse_code_response_markup(content: str) -> CodeResponseSchema:
+    """Parse the coder's tagged response into the existing validated schema."""
+    summary_match = _SUMMARY_RE.search(content)
+    if summary_match is None:
+        raise ValueError("Missing <summary>...</summary> block.")
+
+    changes: list[CodeChangeSchema] = []
+    for change_match in _CHANGE_RE.finditer(content):
+        attrs = {
+            match.group("name"): match.group("value")
+            for match in _ATTR_RE.finditer(change_match.group("attrs"))
+        }
+        action = attrs.get("action")
+        path = attrs.get("path")
+        if action is None or path is None:
+            raise ValueError("Each <change> must include action and path attributes.")
+
+        change_data: dict[str, str] = {"action": action, "path": path}
+        if src := attrs.get("src"):
+            change_data["src"] = src
+
+        content_match = _CONTENT_RE.search(change_match.group("body"))
+        if content_match is not None:
+            change_data["content"] = content_match.group("content")
+
+        # content_match = _CONTENT_RE.search(change_match.group("body"))
+        # if content_match is not None:
+        #     change_data["content"] = html.unescape(content_match.group("content"))
+
+        changes.append(CodeChangeSchema.model_validate(change_data))
+
+    return CodeResponseSchema(
+        summary=summary_match.group("summary").strip(),
+        changes=changes,
     )
 
 
@@ -317,7 +378,7 @@ async def call_coder_for_task(
         system_prompt=CODER_SYSTEM_PROMPT,
         user_message=user_message,
         config=config,
-        parser=CodeResponseSchema.model_validate_json,
+        parser=parse_code_response_markup,
         chat_adapter=chat_adapter,
         on_chunk=on_chunk,
     )
