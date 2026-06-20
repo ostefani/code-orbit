@@ -12,6 +12,7 @@ import asyncio
 import json
 import sys
 from pathlib import Path
+from importlib.metadata import version
 
 from rich.prompt import Prompt
 from rich import print as rprint
@@ -76,7 +77,7 @@ def parse_args() -> argparse.Namespace:
         "--version",
         "-v",
         action="version",
-        version="code-orbit 0.1.0",
+        version=f"code-orbit {version('code-orbit')}",
     )
     return parser.parse_args()
 
