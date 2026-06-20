@@ -74,18 +74,19 @@ def _handle_task_failure(
     )
     runtime.replan_attempts += 1
     reset_execution_state(runtime)
+    next_state = (
+        WorkflowState.PLANNING
+        if runtime.replan_attempts <= MAX_REPLAN_ATTEMPTS
+        else WorkflowState.FAILED
+    )
     event_bus.publish(AgentEvent(
-        name="run.failed",
+        name="task.failed" if next_state is WorkflowState.PLANNING else "run.failed",
         level="error",
         state=WorkflowState.EXECUTING.value,
         message=str(exc),
         payload=EmptyPayload(),
     ))
-    return (
-        WorkflowState.PLANNING
-        if runtime.replan_attempts <= MAX_REPLAN_ATTEMPTS
-        else WorkflowState.FAILED
-    )
+    return next_state
 
 
 def validate_llm_result(

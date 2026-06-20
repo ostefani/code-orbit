@@ -119,6 +119,11 @@ class CliEventRenderer:
                 )
             return
 
+        if event.name == "task.failed":
+            message = event.message or "Task failed; replanning."
+            rprint(f"\n[bold yellow]Replanning after task error:[/bold yellow] {message}")
+            return
+
         if event.name == "preview.change":
             self._render_preview_change(event)
             return

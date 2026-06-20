@@ -614,6 +614,48 @@ def test_call_coder_parses_raw_file_content_without_json_escaping(monkeypatch) -
     assert generations[0].response_format is None
 
 
+def test_call_coder_parses_compact_content_tags(monkeypatch) -> None:
+    plan = PlanSchema(
+        summary="Create component",
+        tasks=[
+            PlanTaskSchema(
+                files=["src/Button.jsx"],
+                goal="Create a button component",
+                reasoning="The user asked for a React button.",
+            )
+        ],
+    )
+    raw_content = "export function Button() { return <button />; }"
+    response = coder_markup_response(
+        summary="Created button",
+        changes=(
+            '<change action="create" path="src/Button.jsx">'
+            f"<content>{raw_content}</content>"
+            "</change>"
+        ),
+    )
+
+    async def fake_run_chat(messages, config, adapter=None, generation=None):
+        return SimpleNamespace(content=response)
+
+    monkeypatch.setattr("agent.llm.run_chat", fake_run_chat)
+
+    result = asyncio.run(
+        call_coder(
+            plan,
+            "<codebase />",
+            Config(chat_streaming=False),
+        )
+    )
+
+    assert result.summary == "Created button"
+    assert result.changes[0] == CodeChangeSchema(
+        path="src/Button.jsx",
+        action="create",
+        content=raw_content,
+    )
+
+
 def test_call_coder_retries_empty_response(monkeypatch) -> None:
     plan = PlanSchema(
         summary="Recover from empty content",
@@ -838,11 +880,12 @@ def test_handle_task_failure_returns_next_state() -> None:
     assert runtime.final_summary == ""
     assert state.name == "PLANNING"
     assert len(events) == 1
-    assert events[0].name == "run.failed"
+    assert events[0].name == "task.failed"
 
     runtime.replan_attempts = MAX_REPLAN_ATTEMPTS
     state = _handle_task_failure(runtime, event_bus, ValueError("boom"))
     assert state.name == "FAILED"
+    assert events[-1].name == "run.failed"
 
 
 def test_open_plan_in_editor_parses_modified_plan(monkeypatch, tmp_path) -> None:
