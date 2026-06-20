@@ -345,3 +345,36 @@ def test_build_context_emits_warning_on_semantic_failure(
 
     assert result.entries
     assert any(getattr(event, "name", "") == "context.warning" for event in events)
+
+
+def test_build_context_continues_when_embedding_adapter_creation_fails(
+    temp_codebase: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def failing_create_embedding_adapter(config: Config):
+        raise RuntimeError("missing local embedding credentials")
+
+    monkeypatch.setattr(
+        "agent.context.create_embedding_adapter",
+        failing_create_embedding_adapter,
+    )
+    bus = EventBus()
+    events: list[object] = []
+    bus.subscribe(events.append)
+
+    result = asyncio.run(
+        build_context_async(
+            str(temp_codebase),
+            "Update the Python source files",
+            Config(ignore_patterns=[".git", "node_modules"]),
+            event_bus=bus,
+        )
+    )
+
+    assert result.entries
+    warnings = [
+        getattr(getattr(event, "payload", None), "warning", "")
+        for event in events
+        if getattr(event, "name", "") == "context.warning"
+    ]
+    assert any("missing local embedding credentials" in warning for warning in warnings)

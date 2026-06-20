@@ -160,6 +160,11 @@ class CliEventRenderer:
             rprint("[bold red]❌ Aborted.[/bold red]")
             return
 
+        if event.name == "run.failed":
+            message = event.message or "Workflow failed."
+            self.console.print(f"\n[bold red]Error:[/bold red] {message}")
+            return
+
         if event.name == "run.completed" and isinstance(
             event.payload, RunCompletedPayload
         ):

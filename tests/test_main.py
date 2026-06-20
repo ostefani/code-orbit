@@ -20,8 +20,15 @@ from agent.chat import (
     ProviderUnavailableError,
 )
 from agent.config import Config
-from agent.events import AgentEvent, EventBus, PlanReadyPayload, RunProposalReadyPayload
+from agent.events import (
+    AgentEvent,
+    EmptyPayload,
+    EventBus,
+    PlanReadyPayload,
+    RunProposalReadyPayload,
+)
 from agent.llm import CodeResponseSchema, PlanSchema, PlanTaskSchema, call_coder
+from agent.rendering import CliEventRenderer
 from agent.schemas import CodeChangeSchema
 from api import AgentRunResult, AgentRunStatus
 from rich.console import Console
@@ -375,6 +382,25 @@ def test_main_reports_unexpected_errors(monkeypatch, tmp_path: Path, capsys) -> 
     captured = capsys.readouterr()
     assert "Unexpected error:" in captured.out
     assert "boom" in captured.out
+
+
+def test_cli_renderer_prints_run_failed_event() -> None:
+    output = StringIO()
+    renderer = CliEventRenderer(Console(file=output))
+
+    renderer(
+        AgentEvent(
+            name="run.failed",
+            level="error",
+            state="failed",
+            message="missing credentials",
+            payload=EmptyPayload(),
+        )
+    )
+
+    rendered = output.getvalue()
+    assert "Error:" in rendered
+    assert "missing credentials" in rendered
 
 
 def test_change_schema_requires_content_for_create_and_update() -> None:
