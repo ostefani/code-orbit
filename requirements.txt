@@ -5,6 +5,7 @@ PyYAML>=6.0.3
 rich>=13.0.0
 pytest>=9.0.3
 pytest-mock>=3.15.1
+httpx>=0.24.0
 
 # Optional: For exact token counting - see TOKEN_COUNTING.md to learn more
 # tokenizers>=0.19.1
