@@ -66,6 +66,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 python3.14 -m pip install -r requirements.txt
 
+
 # 4. Start llama.cpp server (in a separate terminal)
 llama-server \
   --model /path/to/your-model.gguf \

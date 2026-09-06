@@ -1,5 +1,4 @@
 import asyncio
-import html
 from collections.abc import Callable
 import re
 from typing import TypeVar
@@ -91,7 +90,9 @@ RULES:
    </changes>
    </code_response>
 3. Action rules:
-   - create/update: always provide COMPLETE file content in "content". No "src".
+   - create/update: always provide COMPLETE file content in a <content> block,
+     even when the file is empty. No "src". Never emit a create or update
+     <change> without its <content>...</content> block.
      The "create" action automatically creates any missing parent directories;
      do not add a separate "mkdir" step before creating a file.
    - delete: no "content", no "src".
@@ -271,11 +272,20 @@ def _build_structured_llm_retry_message(
         if parser is not parse_code_response_markup
         else "Return ONLY the tagged <code_response> format that matches the schema."
     )
+    correction = ""
+    if parser is parse_code_response_markup:
+        correction = (
+            "\nFor every create or update change, include exactly one "
+            "<content>...</content> block containing the complete replacement "
+            "file text. For example:\n"
+            '<change action="create" path="relative/path.py"><content>full file '
+            "contents</content></change>\n"
+        )
     return (
         f"{user_message}\n\n"
         "Your previous response did not match the required structured format.\n"
         f"Parser error: {exc}\n"
-        f"{format_instruction}"
+        f"{format_instruction}{correction}"
     )
 
 
@@ -317,9 +327,11 @@ def parse_code_response_markup(content: str) -> CodeResponseSchema:
         if content_match is not None:
             change_data["content"] = content_match.group("content")
 
-        # content_match = _CONTENT_RE.search(change_match.group("body"))
-        # if content_match is not None:
-        #     change_data["content"] = html.unescape(content_match.group("content"))
+        if action in {"create", "update"} and content_match is None:
+            raise ValueError(
+                f"Change action={action!r} path={path!r} requires a "
+                "<content>...</content> block."
+            )
 
         changes.append(CodeChangeSchema.model_validate(change_data))
 

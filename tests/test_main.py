@@ -569,6 +569,58 @@ def test_call_coder_retries_invalid_structured_response(monkeypatch) -> None:
     assert "<code_response>" in seen_messages[1][1]
 
 
+def test_call_coder_retries_create_without_content_block(monkeypatch) -> None:
+    plan = PlanSchema(
+        summary="Create a script",
+        tasks=[
+            PlanTaskSchema(
+                files=["test-muse/script.js"],
+                goal="Create the requested script.",
+                reasoning="The requested file does not exist yet.",
+            )
+        ],
+    )
+    responses = iter(
+        [
+            coder_markup_response(
+                changes='<change action="create" path="test-muse/script.js"></change>'
+            ),
+            coder_markup_response(
+                changes=(
+                    '<change action="create" path="test-muse/script.js">'
+                    "<content>console.log('ok');</content>"
+                    "</change>"
+                )
+            ),
+        ]
+    )
+    seen_messages: list[tuple[str, ...]] = []
+
+    async def fake_run_chat(messages, config, adapter=None, generation=None):
+        seen_messages.append(tuple(message.content for message in messages))
+        return SimpleNamespace(content=next(responses))
+
+    monkeypatch.setattr("agent.llm.run_chat", fake_run_chat)
+
+    result = asyncio.run(
+        call_coder(
+            plan,
+            "<codebase />",
+            Config(chat_streaming=False, structured_llm_retries=1),
+        )
+    )
+
+    assert result.changes == [
+        CodeChangeSchema(
+            path="test-muse/script.js",
+            action="create",
+            content="console.log('ok');",
+        )
+    ]
+    assert "requires a <content>...</content> block" in seen_messages[1][1]
+    assert "For every create or update change" in seen_messages[1][1]
+
+
 def test_call_coder_parses_raw_file_content_without_json_escaping(monkeypatch) -> None:
     plan = PlanSchema(
         summary="Recover from malformed JSON",
