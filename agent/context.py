@@ -154,7 +154,9 @@ def _extract_prompt_terms(prompt: str) -> set[str]:
 def _score_path(
     path: str,
     estimated_tokens: int,
-    prompt: str,
+    prompt_terms: set[str],
+    mentions_tests: bool,
+    mentions_config: bool,
     semantic_score: float = 0.0,
 ) -> float:
     path_obj = Path(path)
@@ -162,7 +164,6 @@ def _score_path(
     name_lower = path_obj.name.lower()
     suffix = path_obj.suffix.lower()
     parts_lower = {part.lower() for part in path_obj.parts}
-    prompt_terms = _extract_prompt_terms(prompt)
 
     score = 0.0
 
@@ -189,7 +190,6 @@ def _score_path(
         score -= 80
 
     # 5. Tests only get a boost if the prompt suggests tests.
-    mentions_tests = bool(prompt_terms & TEST_HINTS)
     is_test_file = bool(parts_lower & TEST_HINTS) or any(
         hint in name_lower for hint in TEST_HINTS
     )
@@ -197,7 +197,7 @@ def _score_path(
         score += 20 if mentions_tests else -20
 
     # 6. Config files get a boost only for config/tooling prompts.
-    if suffix in {".json", ".yaml", ".yml", ".toml"} and prompt_terms & CONFIG_HINTS:
+    if suffix in {".json", ".yaml", ".yml", ".toml"} and mentions_config:
         score += 22
 
     # 7. Size-aware penalty: large files are more expensive.
@@ -410,6 +410,11 @@ async def build_context_async(
             if close is not None:
                 await close()
 
+    # Hoisted per-build prompt signals: tokenize once, reuse for every file.
+    prompt_terms = _extract_prompt_terms(prompt)
+    mentions_tests = bool(prompt_terms & TEST_HINTS)
+    mentions_config = bool(prompt_terms & CONFIG_HINTS)
+
     candidate_heap: list[tuple[float, int, str, int, ScoredFileCandidate]] = []
     heap_counter = 0
     for candidate in candidates:
@@ -417,7 +422,9 @@ async def build_context_async(
         lexical_score = _score_path(
             candidate.path,
             _optimistic_utf8_token_estimate(candidate.size_bytes),
-            prompt,
+            prompt_terms,
+            mentions_tests,
+            mentions_config,
             semantic_score=0.0,
         )
         blended_score = (
@@ -472,7 +479,9 @@ async def build_context_async(
             lexical_score = _score_path(
                 candidate.path,
                 max(1, len(content) // 3),
-                prompt,
+                prompt_terms,
+                mentions_tests,
+                mentions_config,
                 semantic_score=0.0,
             )
             blended_score = (
