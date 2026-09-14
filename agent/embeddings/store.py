@@ -222,8 +222,17 @@ class VectorStore:
         return {path: float(score) for path, score in zip(index.record_paths, scores)}
 
     def score_path(self, path: str, query_vector: Sequence[float]) -> float:
-        record = self._records.get(path)
-        if record is None or not record.chunks:
+        if path not in self._records or not self._records[path].chunks:
+            return 0.0
+
+        index = self._ensure_numpy_index()
+        try:
+            record_index = index.record_paths.index(path)
+        except ValueError:
+            return 0.0
+
+        mask = index.chunk_path_ids == record_index
+        if not np.any(mask):
             return 0.0
 
         query = np.asarray(query_vector, dtype=np.float64)
@@ -231,20 +240,18 @@ class VectorStore:
         if query_norm < 1e-10:
             return 0.0
 
-        chunk_matrix = np.asarray(
-            [chunk.vector for chunk in record.chunks],
-            dtype=np.float64,
-        )
-        if chunk_matrix.shape[1] != len(query):
+        if index.chunk_matrix.size > 0 and index.chunk_matrix.shape[1] != len(query):
             raise ValueError(
                 "Query vector dimension does not match indexed embeddings: "
-                f"got {len(query)}, expected {chunk_matrix.shape[1]}."
+                f"got {len(query)}, expected {index.chunk_matrix.shape[1]}."
             )
 
-        chunk_norms = np.linalg.norm(chunk_matrix, axis=1)
+        chunk_matrix = index.chunk_matrix[mask]
+        chunk_norms = index.chunk_norms[mask]
+
         dot_products = chunk_matrix @ query
         valid = chunk_norms > 1e-10
-        cosines = np.zeros(len(record.chunks), dtype=np.float64)
+        cosines = np.zeros(len(chunk_matrix), dtype=np.float64)
         cosines[valid] = dot_products[valid] / (chunk_norms[valid] * query_norm)
         return float(np.max(np.maximum(cosines, 0.0)))
 
