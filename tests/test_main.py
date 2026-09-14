@@ -564,9 +564,12 @@ def test_call_coder_retries_invalid_structured_response(monkeypatch) -> None:
 
     assert result.summary == "Recovered"
     assert len(seen_messages) == 2
+    # Conversational retry: original context intact + failed output + correction.
+    assert len(seen_messages[1]) == 4
     assert seen_messages[1][1].startswith("<codebase />\n\n<approved_plan_summary>")
-    assert "required structured format" in seen_messages[1][1]
-    assert "<code_response>" in seen_messages[1][1]
+    assert seen_messages[1][2] == "not-json"
+    assert "required structured format" in seen_messages[1][3]
+    assert "<code_response>" in seen_messages[1][3]
 
 
 def test_call_coder_retries_create_without_content_block(monkeypatch) -> None:
@@ -617,8 +620,11 @@ def test_call_coder_retries_create_without_content_block(monkeypatch) -> None:
             content="console.log('ok');",
         )
     ]
-    assert "requires a <content>...</content> block" in seen_messages[1][1]
-    assert "For every create or update change" in seen_messages[1][1]
+    assert len(seen_messages[1]) == 4
+    assert seen_messages[1][1].startswith("<codebase />\n\n<approved_plan_summary>")
+    assert "create" in seen_messages[1][2]
+    assert "requires a <content>...</content> block" in seen_messages[1][3]
+    assert "For every create or update change" in seen_messages[1][3]
 
 
 def test_call_coder_parses_raw_file_content_without_json_escaping(monkeypatch) -> None:

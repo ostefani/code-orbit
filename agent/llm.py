@@ -1,5 +1,5 @@
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 import re
 from typing import TypeVar
 
@@ -190,6 +190,7 @@ async def _call_structured_llm(
     messages = base_messages
 
     for attempt in range(retryable_attempts + 1):
+        attempt_content: str | None = None
         try:
             content = await _get_structured_llm_content(
                 messages,
@@ -201,6 +202,7 @@ async def _call_structured_llm(
             if not content:
                 raise EmptyLLMResponseError("Model returned empty content.")
 
+            attempt_content = content
             return parser(content)
         except EmptyLLMResponseError:
             if attempt >= retryable_attempts:
@@ -210,12 +212,18 @@ async def _call_structured_llm(
                 raise ValueError(
                     f"Invalid structured response from model: {exc}"
                 ) from exc
+            # Conversational retry: keep the full original context intact and
+            # append the failed output (truncated) plus a short correction so
+            # the model sees its mistake instead of starting over.
             messages = (
-                base_messages[0],
+                *messages,
+                ChatMessage(
+                    role="assistant",
+                    content=_truncate_prior_output(attempt_content or ""),
+                ),
                 ChatMessage(
                     role="user",
                     content=_build_structured_llm_retry_message(
-                        user_message,
                         exc,
                         parser=parser,
                     ),
@@ -232,7 +240,7 @@ async def _call_structured_llm(
 
 
 async def _get_structured_llm_content(
-    messages: tuple[ChatMessage, ChatMessage],
+    messages: Sequence[ChatMessage],
     config: Config,
     *,
     generation: ChatGenerationSettings,
@@ -261,8 +269,27 @@ async def _get_structured_llm_content(
     return response.content.strip()
 
 
+_MAX_RETRY_PRIOR_OUTPUT_CHARS = 2000
+
+
+def _truncate_prior_output(content: str) -> str:
+    """Cap the failed output appended to retry history.
+
+    Keeps the head (opening tags/structure) and the tail (where truncation
+    and unclosed-block errors usually live) with an omission marker.
+    """
+    if len(content) <= _MAX_RETRY_PRIOR_OUTPUT_CHARS:
+        return content
+    head_len = _MAX_RETRY_PRIOR_OUTPUT_CHARS // 2
+    tail_len = _MAX_RETRY_PRIOR_OUTPUT_CHARS - head_len
+    return (
+        f"{content[:head_len]}\n"
+        f"[... truncated {len(content) - _MAX_RETRY_PRIOR_OUTPUT_CHARS} chars ...]\n"
+        f"{content[-tail_len:]}"
+    )
+
+
 def _build_structured_llm_retry_message(
-    user_message: str,
     exc: Exception,
     *,
     parser: Callable[[str], BaseModel],
@@ -282,7 +309,6 @@ def _build_structured_llm_retry_message(
             "contents</content></change>\n"
         )
     return (
-        f"{user_message}\n\n"
         "Your previous response did not match the required structured format.\n"
         f"Parser error: {exc}\n"
         f"{format_instruction}{correction}"
