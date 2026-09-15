@@ -259,28 +259,53 @@ class VectorStore:
         self, query_vector: Sequence[float], top_k: int = 10
     ) -> list[EmbeddingSearchResult]:
         index, cosines = self._chunk_cosines(query_vector)
-        if len(cosines) == 0:
+        if len(cosines) == 0 or top_k <= 0:
             return []
 
         scores = np.full(len(index.record_paths), -np.inf, dtype=np.float64)
         np.maximum.at(scores, index.chunk_path_ids, cosines)
 
-        best_chunk_positions = np.full(len(index.record_paths), -1, dtype=np.int64)
-        order = np.lexsort(
-            (
-                index.chunk_indexes,
-                -cosines,
-                index.chunk_path_ids,
-            )
+        has_chunks = (
+            np.bincount(index.chunk_path_ids, minlength=len(index.record_paths)) > 0
         )
+        num_valid = int(np.count_nonzero(has_chunks))
+        if num_valid == 0:
+            return []
+
+        if num_valid <= top_k:
+            selected = has_chunks
+        else:
+            # O(records) pre-filter: keep everything strictly above the kth
+            # score, plus every record tied at the cutoff so the final
+            # sort-then-slice below matches a full sort exactly.
+            cutoff = float(-np.partition(-scores[has_chunks], top_k - 1)[top_k - 1])
+            selected = (has_chunks & (scores > cutoff)) | (
+                has_chunks & (scores == cutoff)
+            )
+
+        # Best chunk per selected record only: highest cosine, ties broken by
+        # smallest chunk index (same rule as the old global lexsort).
+        selected_chunks = selected[index.chunk_path_ids]
+        positions = np.nonzero(selected_chunks)[0]
+        ranked = positions[
+            np.lexsort(
+                (
+                    index.chunk_indexes[positions],
+                    -cosines[positions],
+                    index.chunk_path_ids[positions],
+                )
+            )
+        ]
         record_ids, first_positions = np.unique(
-            index.chunk_path_ids[order],
+            index.chunk_path_ids[ranked],
             return_index=True,
         )
-        best_chunk_positions[record_ids] = order[first_positions]
+        best_chunk_positions = np.full(len(index.record_paths), -1, dtype=np.int64)
+        best_chunk_positions[record_ids] = ranked[first_positions]
 
         results: list[EmbeddingSearchResult] = []
-        for record_index, chunk_position in enumerate(best_chunk_positions):
+        for record_index in np.nonzero(selected)[0]:
+            chunk_position = int(best_chunk_positions[record_index])
             if chunk_position == -1:
                 continue
             results.append(
