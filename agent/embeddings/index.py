@@ -43,6 +43,54 @@ class EmbeddingSyncResult:
         return tuple(sorted(set(self.failed_files) | set(self.timed_out_files)))
 
 
+def _scan_pending_files(
+    root_path: Path,
+    config: Config,
+    cached_files: Mapping[str, FileEmbeddingRecord],
+    file_bytes: Mapping[str, bytes] | None,
+) -> tuple[
+    set[str],
+    list[str],
+    dict[str, tuple[str, list[CodeChunk]]],
+    list[tuple[str, str, CodeChunk]],
+]:
+    """Walk the tree and prepare every file needing (re-)embedding.
+
+    Synchronous blocking work (directory walk, file reads, hashing, chunking),
+    so callers run it in a worker thread. Read-only over its inputs; returns
+    fresh containers in deterministic walk order.
+    """
+    reused_files: list[str] = []
+    pending_files: dict[str, tuple[str, list[CodeChunk]]] = {}
+    pending_chunks: list[tuple[str, str, CodeChunk]] = []
+    current_paths: set[str] = set()
+
+    for path in iter_code_files(root_path, config):
+        rel_path = str(path.relative_to(root_path))
+        current_paths.add(rel_path)
+        data = file_bytes.get(rel_path) if file_bytes is not None else None
+        if data is None:
+            data = _read_file_bytes(path)
+        if data is None:
+            continue
+
+        file_hash = hashlib.sha256(data).hexdigest()
+        cached_record = cached_files.get(rel_path)
+        if cached_record is not None and cached_record.sha256 == file_hash:
+            reused_files.append(rel_path)
+            continue
+
+        content = data.decode("utf-8", errors="ignore")
+        chunks = chunk_file(path, content)
+        if not chunks:
+            continue
+
+        pending_files[rel_path] = (file_hash, chunks)
+        pending_chunks.extend((rel_path, file_hash, chunk) for chunk in chunks)
+
+    return current_paths, reused_files, pending_files, pending_chunks
+
+
 async def build_embedding_index(
     root: str | Path,
     config: Config,
@@ -83,33 +131,12 @@ async def build_embedding_index(
     effective_batch_size = max(1, batch_size or config.embedding_batch_size)
     max_concurrency = max(1, config.embedding_max_concurrency)
 
-    reused_files: list[str] = []
-    pending_files: dict[str, tuple[str, list[CodeChunk]]] = {}
-    pending_chunks: list[tuple[str, str, CodeChunk]] = []
-    current_paths: set[str] = set()
-
-    for path in iter_code_files(root_path, config):
-        rel_path = str(path.relative_to(root_path))
-        current_paths.add(rel_path)
-        data = file_bytes.get(rel_path) if file_bytes is not None else None
-        if data is None:
-            data = _read_file_bytes(path)
-        if data is None:
-            continue
-
-        file_hash = hashlib.sha256(data).hexdigest()
-        cached_record = cache.files.get(rel_path)
-        if cached_record is not None and cached_record.sha256 == file_hash:
-            reused_files.append(rel_path)
-            continue
-
-        content = data.decode("utf-8", errors="ignore")
-        chunks = chunk_file(path, content)
-        if not chunks:
-            continue
-
-        pending_files[rel_path] = (file_hash, chunks)
-        pending_chunks.extend((rel_path, file_hash, chunk) for chunk in chunks)
+    # Blocking scan (walk/read/hash/chunk) off the event loop.
+    current_paths, reused_files, pending_files, pending_chunks = (
+        await asyncio.to_thread(
+            _scan_pending_files, root_path, config, cache.files, file_bytes
+        )
+    )
 
     refreshed_records: dict[str, list[ChunkEmbedding]] = {
         path: [] for path in pending_files
