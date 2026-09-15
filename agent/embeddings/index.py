@@ -234,10 +234,15 @@ async def build_embedding_index(
             )
             updated_files.append(rel_path)
 
-        for stale_path in set(cache.files) - current_paths:
+        stale_paths = set(cache.files) - current_paths
+        for stale_path in stale_paths:
             cache.files.pop(stale_path, None)
 
-        cache.save(cache_file)
+        # Dirty-check: skip the full .npz rewrite when nothing changed and a
+        # cache file already exists. A missing file is always (re)written so
+        # fresh checkouts and legacy-JSON migrations materialize it once.
+        if updated_files or stale_paths or not cache_file.exists():
+            cache.save(cache_file)
         vector_store = VectorStore(cache.files.values())
         return EmbeddingSyncResult(
             cache_path=cache_file,
