@@ -5,6 +5,9 @@
 ![Interface](https://img.shields.io/badge/UI-Rich-green)
 ![Type](https://img.shields.io/badge/type-CLI-informational)
 ![License](https://img.shields.io/badge/license-MIT-success)
+![Visitors](https://visitor-badge.laobi.icu/badge?page_id=ostefani.code-orbit)
+
+**Key Rotation Note:** New signature keys effective Sep 16, 2026. Legacy keys are no longer active on this profile. Commits signed before that date may appear Unverified as a result of the rotation.
 
 A local, agentic code editor compatible with any OpenAI-compatible local LLM provider ([llama.cpp](https://github.com/ggerganov/llama.cpp), [Ollama](https://ollama.com), [LM Studio](https://lmstudio.ai)). Supports Point it at any directory, give it a prompt, and it reads your codebase, plans changes, shows you a diff, and applies them.
 
