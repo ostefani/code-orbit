@@ -330,6 +330,84 @@ def test_build_embedding_sync_reads_each_file_once(tmp_path: Path, monkeypatch) 
     assert calls["count"] == expected_files
 
 
+def test_build_embedding_sync_prefers_preloaded_bytes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_codebase(tmp_path)
+    config = Config(ignore_patterns=[".git", "node_modules"])
+    client = FakeEmbeddingClient()
+    preloaded = {
+        str(path.relative_to(tmp_path)): path.read_bytes()
+        for path in iter_code_files(tmp_path, config)
+    }
+
+    def forbidden_read_bytes(self: Path):
+        raise AssertionError(f"unexpected disk read for {self}")
+
+    monkeypatch.setattr(Path, "read_bytes", forbidden_read_bytes)
+
+    result = build_embedding_sync(
+        tmp_path,
+        config,
+        client=client,
+        cache_path=default_embedding_cache_path(tmp_path),
+        batch_size=2,
+        file_bytes=preloaded,
+    )
+
+    assert set(result.updated_files) == set(preloaded)
+
+
+def test_build_embedding_sync_skips_cache_write_when_nothing_changed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_codebase(tmp_path)
+    config = Config(ignore_patterns=[".git", "node_modules"])
+    cache_path = default_embedding_cache_path(tmp_path)
+    first = build_embedding_sync(
+        tmp_path,
+        config,
+        client=FakeEmbeddingClient(),
+        cache_path=cache_path,
+        batch_size=2,
+    )
+    assert set(first.updated_files) == {"src/auth/middleware.py", "src/tests.py"}
+
+    saves = {"count": 0}
+    original_save = EmbeddingCache.save
+
+    def counting_save(self: EmbeddingCache, path: Path):
+        saves["count"] += 1
+        return original_save(self, path)
+
+    monkeypatch.setattr(EmbeddingCache, "save", counting_save)
+
+    second = build_embedding_sync(
+        tmp_path,
+        config,
+        client=FakeEmbeddingClient(),
+        cache_path=cache_path,
+        batch_size=2,
+    )
+    assert second.updated_files == ()
+    assert saves["count"] == 0
+
+    # A real change still rewrites the cache exactly once.
+    (tmp_path / "src" / "tests.py").write_text(
+        "def test_rate_limit():\n    assert False\n",
+        encoding="utf-8",
+    )
+    third = build_embedding_sync(
+        tmp_path,
+        config,
+        client=FakeEmbeddingClient(),
+        cache_path=cache_path,
+        batch_size=2,
+    )
+    assert third.updated_files == ("src/tests.py",)
+    assert saves["count"] == 1
+
+
 def test_build_embedding_sync_wraps_batches_in_timeout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

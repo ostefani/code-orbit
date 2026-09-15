@@ -146,6 +146,25 @@ def _safe_candidate(root: Path, path: Path) -> FileCandidate | None:
     )
 
 
+def _read_candidate_bytes(
+    root: Path, candidates: list[FileCandidate]
+) -> dict[str, bytes]:
+    """Read every candidate file exactly once, keyed by relative path.
+
+    The returned bytes are shared between the embedding-index hash pass and
+    the packing pass, so a context build performs one content read per file
+    instead of one per phase. Unreadable files are skipped, matching the
+    packing loop's existing skip behavior.
+    """
+    file_bytes: dict[str, bytes] = {}
+    for candidate in candidates:
+        try:
+            file_bytes[candidate.path] = (root / candidate.path).read_bytes()
+        except (OSError, PermissionError):
+            continue
+    return file_bytes
+
+
 def _extract_prompt_terms(prompt: str) -> set[str]:
     words = re.findall(r"[a-zA-Z0-9_.-]+", prompt.lower())
     return {word for word in words if len(word) > 1 and word not in STOPWORDS}
@@ -310,6 +329,10 @@ async def build_context_async(
         config,
         collect_candidates=True,
     )
+    # Single bulk content read shared by the embedding-index hash pass below
+    # and the packing loop. Entries are popped as packing consumes them, so
+    # peak memory stays near one copy of the selected files.
+    file_bytes = _read_candidate_bytes(root_path, candidates)
 
     semantic_scores: dict[str, float] = {}
     owns_semantic_client = embedding_client is None
@@ -340,6 +363,7 @@ async def build_context_async(
                 cache_path=cache_path or default_embedding_cache_path(root_path),
                 client=semantic_client,
                 batch_size=config.embedding_batch_size,
+                file_bytes=file_bytes,
             )
         except Exception as exc:
             if event_bus is not None:
@@ -469,11 +493,13 @@ async def build_context_async(
         candidate = scored_candidate.candidate
 
         if not scored_candidate.exact:
-            path = root_path / candidate.path
-            try:
-                content = path.read_text(encoding="utf-8", errors="ignore")
-            except (OSError, PermissionError):
-                continue
+            raw = file_bytes.pop(candidate.path, None)
+            if raw is None:
+                try:
+                    raw = (root_path / candidate.path).read_bytes()
+                except (OSError, PermissionError):
+                    continue
+            content = raw.decode("utf-8", errors="ignore")
 
             semantic_score = scored_candidate.semantic_score
             lexical_score = _score_path(

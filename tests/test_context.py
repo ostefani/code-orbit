@@ -162,14 +162,21 @@ def test_context_scores_utf8_files_by_character_estimate(
 def test_context_reads_exact_scored_file_once(tmp_path: Path, monkeypatch) -> None:
     file_path = tmp_path / "app.py"
     file_path.write_text("print('hello')\n", encoding="utf-8")
-    read_counts: dict[Path, int] = {}
+    read_counts: dict[str, int] = {}
+    original_read_bytes = Path.read_bytes
     original_read_text = Path.read_text
+
+    def counting_read_bytes(self: Path):
+        if self == file_path:
+            read_counts["read_bytes"] = read_counts.get("read_bytes", 0) + 1
+        return original_read_bytes(self)
 
     def counting_read_text(self: Path, *args, **kwargs):
         if self == file_path:
-            read_counts[self] = read_counts.get(self, 0) + 1
+            read_counts["read_text"] = read_counts.get("read_text", 0) + 1
         return original_read_text(self, *args, **kwargs)
 
+    monkeypatch.setattr(Path, "read_bytes", counting_read_bytes)
     monkeypatch.setattr(Path, "read_text", counting_read_text)
 
     result = asyncio.run(
@@ -182,7 +189,9 @@ def test_context_reads_exact_scored_file_once(tmp_path: Path, monkeypatch) -> No
     )
 
     assert [entry.path for entry in result.entries] == ["app.py"]
-    assert read_counts[file_path] == 1
+    # One bulk read shared by the embedding-index hash pass and packing.
+    assert read_counts.get("read_bytes", 0) == 1
+    assert read_counts.get("read_text", 0) == 0
 
 
 def test_build_context_reports_budget_breakdown_and_zero_budget_warning(
