@@ -330,6 +330,34 @@ def test_build_embedding_sync_reads_each_file_once(tmp_path: Path, monkeypatch) 
     assert calls["count"] == expected_files
 
 
+def test_build_embedding_sync_prefers_preloaded_bytes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_codebase(tmp_path)
+    config = Config(ignore_patterns=[".git", "node_modules"])
+    client = FakeEmbeddingClient()
+    preloaded = {
+        str(path.relative_to(tmp_path)): path.read_bytes()
+        for path in iter_code_files(tmp_path, config)
+    }
+
+    def forbidden_read_bytes(self: Path):
+        raise AssertionError(f"unexpected disk read for {self}")
+
+    monkeypatch.setattr(Path, "read_bytes", forbidden_read_bytes)
+
+    result = build_embedding_sync(
+        tmp_path,
+        config,
+        client=client,
+        cache_path=default_embedding_cache_path(tmp_path),
+        batch_size=2,
+        file_bytes=preloaded,
+    )
+
+    assert set(result.updated_files) == set(preloaded)
+
+
 def test_build_embedding_sync_wraps_batches_in_timeout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

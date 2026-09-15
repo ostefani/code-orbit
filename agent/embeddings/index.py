@@ -1,7 +1,7 @@
 import asyncio
 import hashlib
 from dataclasses import dataclass
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -50,7 +50,15 @@ async def build_embedding_index(
     cache_path: Path | None = None,
     client: EmbeddingAdapter | None = None,
     batch_size: int | None = None,
+    file_bytes: Mapping[str, bytes] | None = None,
 ) -> EmbeddingSyncResult:
+    """Sync the embedding cache and vector store for ``root``.
+
+    ``file_bytes`` optionally supplies pre-read file contents keyed by root
+    -relative path (as produced by the context builder's single bulk read),
+    so files are not re-read from disk for hashing. Paths missing from the
+    mapping fall back to a direct read.
+    """
     root_path = Path(root).resolve()
     cache_file = cache_path or default_embedding_cache_path(root_path)
     cache_load_path = cache_file
@@ -83,7 +91,9 @@ async def build_embedding_index(
     for path in iter_code_files(root_path, config):
         rel_path = str(path.relative_to(root_path))
         current_paths.add(rel_path)
-        data = _read_file_bytes(path)
+        data = file_bytes.get(rel_path) if file_bytes is not None else None
+        if data is None:
+            data = _read_file_bytes(path)
         if data is None:
             continue
 
@@ -223,6 +233,7 @@ def build_embedding_sync(
     cache_path: Path | None = None,
     client: EmbeddingAdapter | None = None,
     batch_size: int | None = None,
+    file_bytes: Mapping[str, bytes] | None = None,
 ) -> EmbeddingSyncResult:
     return asyncio.run(
         build_embedding_index(
@@ -231,5 +242,6 @@ def build_embedding_sync(
             cache_path=cache_path,
             client=client,
             batch_size=batch_size,
+            file_bytes=file_bytes,
         )
     )
