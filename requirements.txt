@@ -1,4 +1,4 @@
-openai>=2.31.0
+openai>=2.31
 numpy>=2.0
 pydantic>=2.0.0
 PyYAML>=6.0.3
