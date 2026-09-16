@@ -1,9 +1,17 @@
 from collections.abc import Mapping, Sequence
-from typing import Any, ClassVar, Protocol, TypedDict
+from typing import Any, ClassVar, Protocol, TypedDict, cast
 
 from httpx import AsyncClient, Timeout, URL
-from openai import NOT_GIVEN, NotGiven
+from openai import NotGiven
 
+from ...openai_shared import (
+    BASE_OPENAI_OPTION_KEYS,
+    OpenAIErrorKind,
+    OpenAIExceptionTypes,
+    base_openai_client_kwargs,
+    classify_openai_exception,
+    coerce_openai_client_options,
+)
 from ..adapters import (
     EmbeddingProviderAuthenticationError,
     EmbeddingProviderError,
@@ -91,63 +99,18 @@ class OpenAIEmbeddingAdapter:
                 self.provider_name, self._config.options
             )
 
-            timeout: float | Timeout | NotGiven | None = NOT_GIVEN
-            if "timeout" in openai_options:
-                timeout = openai_options["timeout"]
-
-            max_retries = 2
-            if "max_retries" in openai_options:
-                max_retries = openai_options["max_retries"]
-
-            default_headers: Mapping[str, str] | None = None
-            if "default_headers" in openai_options:
-                default_headers = openai_options["default_headers"]
-
-            default_query: Mapping[str, object] | None = None
-            if "default_query" in openai_options:
-                default_query = openai_options["default_query"]
-
-            http_client: AsyncClient | None = None
-            if "http_client" in openai_options:
-                http_client = openai_options["http_client"]
-
-            strict_response_validation = False
-            if "_strict_response_validation" in openai_options:
-                strict_response_validation = openai_options[
-                    "_strict_response_validation"
-                ]
-
-            organization: str | None = None
-            if "organization" in openai_options:
-                organization = openai_options["organization"]
-
-            project: str | None = None
-            if "project" in openai_options:
-                project = openai_options["project"]
-
-            webhook_secret: str | None = None
-            if "webhook_secret" in openai_options:
-                webhook_secret = openai_options["webhook_secret"]
-
-            websocket_base_url: str | URL | None = None
-            if "websocket_base_url" in openai_options:
-                websocket_base_url = openai_options["websocket_base_url"]
+            client_kwargs = base_openai_client_kwargs(
+                openai_options,
+                api_key=self._config.api_key,
+                base_url=self._config.api_base,
+            )
+            client_kwargs["http_client"] = openai_options.get("http_client")
+            client_kwargs["_strict_response_validation"] = openai_options.get(
+                "_strict_response_validation", False
+            )
 
             try:
-                client = _AsyncOpenAI(
-                    api_key=self._config.api_key,
-                    organization=organization,
-                    project=project,
-                    webhook_secret=webhook_secret,
-                    base_url=self._config.api_base,
-                    websocket_base_url=websocket_base_url,
-                    timeout=timeout,
-                    max_retries=max_retries,
-                    default_headers=default_headers,
-                    default_query=default_query,
-                    http_client=http_client,
-                    _strict_response_validation=strict_response_validation,
-                )
+                client = _AsyncOpenAI(**client_kwargs)
             except Exception as exc:  # pragma: no cover - constructor validation
                 if isinstance(exc, EmbeddingProviderError):
                     raise
@@ -188,131 +151,57 @@ class OpenAIEmbeddingAdapter:
             raise _map_openai_exception(self.provider_name, exc) from exc
 
 
-def _map_openai_exception(provider: str, exc: Exception) -> EmbeddingProviderError:
-    if not _OPENAI_AVAILABLE:
-        return EmbeddingProviderRequestError(provider, str(exc))
+def _exception_types() -> OpenAIExceptionTypes:
+    # Sourced from this module's globals (not the shared module) so tests can
+    # keep patching these names with fakes.
+    return OpenAIExceptionTypes(
+        available=_OPENAI_AVAILABLE,
+        authentication_error=_AuthenticationError,
+        rate_limit_error=_RateLimitError,
+        connection_error=_APIConnectionError,
+        timeout_error=_APITimeoutError,
+        internal_server_error=_InternalServerError,
+        bad_request_error=_BadRequestError,
+        conflict_error=_ConflictError,
+        not_found_error=_NotFoundError,
+        permission_denied_error=_PermissionDeniedError,
+        api_error=_APIError,
+        status_error=_APIStatusError,
+    )
 
-    if _AuthenticationError is not None and isinstance(exc, _AuthenticationError):
-        return EmbeddingProviderAuthenticationError(provider, str(exc))
-    if _RateLimitError is not None and isinstance(exc, _RateLimitError):
-        return EmbeddingProviderRateLimitError(provider, str(exc))
-    if (
-        _APIConnectionError is not None
-        and _APITimeoutError is not None
-        and _InternalServerError is not None
-        and isinstance(exc, (_APIConnectionError, _APITimeoutError, _InternalServerError))
-    ):
-        return EmbeddingProviderUnavailableError(provider, str(exc))
-    if (
-        _BadRequestError is not None
-        and _ConflictError is not None
-        and _NotFoundError is not None
-        and _PermissionDeniedError is not None
-        and _APIError is not None
-        and isinstance(
-            exc,
-            (
-                _BadRequestError,
-                _ConflictError,
-                _NotFoundError,
-                _PermissionDeniedError,
-                _APIError,
-            ),
-        )
-    ):
-        return EmbeddingProviderRequestError(provider, str(exc))
-    if _APIStatusError is not None and isinstance(exc, _APIStatusError):
-        status_code = getattr(exc, "status_code", None)
-        if status_code is not None and int(status_code) >= 500:
-            return EmbeddingProviderUnavailableError(provider, str(exc))
-        return EmbeddingProviderRequestError(provider, str(exc))
-    return EmbeddingProviderRequestError(provider, str(exc))
+
+def _map_openai_exception(provider: str, exc: Exception) -> EmbeddingProviderError:
+    kind = classify_openai_exception(exc, _exception_types())
+    message = str(exc)
+    if kind is OpenAIErrorKind.RATE_LIMIT:
+        return EmbeddingProviderRateLimitError(provider, message)
+    if kind is OpenAIErrorKind.AUTHENTICATION:
+        return EmbeddingProviderAuthenticationError(provider, message)
+    if kind is OpenAIErrorKind.UNAVAILABLE:
+        return EmbeddingProviderUnavailableError(provider, message)
+    return EmbeddingProviderRequestError(provider, message)
+
+
+_EMBEDDING_OPTION_KEYS = (
+    RESERVED_EMBEDDING_PROVIDER_OPTION_KEYS
+    | BASE_OPENAI_OPTION_KEYS
+    | {"http_client", "_strict_response_validation"}
+)
 
 
 def _coerce_openai_options(
     provider: str, options: Mapping[str, object]
 ) -> OpenAIClientOptions:
-    unknown_keys = set(options) - (
-        RESERVED_EMBEDDING_PROVIDER_OPTION_KEYS
-        | {
-            "timeout",
-            "max_retries",
-            "default_headers",
-            "default_query",
-            "http_client",
-            "_strict_response_validation",
-            "organization",
-            "project",
-            "webhook_secret",
-            "websocket_base_url",
-        }
-    )
-    if unknown_keys:
-        keys = ", ".join(sorted(unknown_keys))
-        raise EmbeddingProviderConfigurationError(
+    result = cast(
+        OpenAIClientOptions,
+        coerce_openai_client_options(
             provider,
-            f"Unsupported OpenAI embedding option(s): {keys}.",
-        )
-
-    result: OpenAIClientOptions = {}
-
-    if "timeout" in options:
-        timeout = options["timeout"]
-        if timeout is None or isinstance(timeout, (int, float, Timeout)):
-            result["timeout"] = timeout
-        else:
-            raise EmbeddingProviderConfigurationError(
-                provider,
-                "OpenAI embedding option 'timeout' must be a number, httpx.Timeout, or null.",
-            )
-
-    if "max_retries" in options:
-        max_retries = options["max_retries"]
-        if isinstance(max_retries, int) and not isinstance(max_retries, bool):
-            result["max_retries"] = max_retries
-        else:
-            raise EmbeddingProviderConfigurationError(
-                provider,
-                "OpenAI embedding option 'max_retries' must be an integer.",
-            )
-
-    if "default_headers" in options:
-        default_headers = options["default_headers"]
-        if isinstance(default_headers, Mapping):
-            headers: dict[str, str] = {}
-            for header_key, header_value in default_headers.items():
-                if not isinstance(header_key, str) or not isinstance(
-                    header_value, str
-                ):
-                    raise EmbeddingProviderConfigurationError(
-                        provider,
-                        "OpenAI embedding option 'default_headers' must map strings to strings.",
-                    )
-                headers[header_key] = header_value
-            result["default_headers"] = headers
-        elif default_headers is not None:
-            raise EmbeddingProviderConfigurationError(
-                provider,
-                "OpenAI embedding option 'default_headers' must be a mapping or null.",
-            )
-
-    if "default_query" in options:
-        default_query = options["default_query"]
-        if isinstance(default_query, Mapping):
-            query: dict[str, object] = {}
-            for query_key, query_value in default_query.items():
-                if not isinstance(query_key, str):
-                    raise EmbeddingProviderConfigurationError(
-                        provider,
-                        "OpenAI embedding option 'default_query' must use string keys.",
-                    )
-                query[query_key] = query_value
-            result["default_query"] = query
-        elif default_query is not None:
-            raise EmbeddingProviderConfigurationError(
-                provider,
-                "OpenAI embedding option 'default_query' must be a mapping or null.",
-            )
+            options,
+            label="embedding",
+            error_cls=EmbeddingProviderConfigurationError,
+            allowed_keys=_EMBEDDING_OPTION_KEYS,
+        ),
+    )
 
     if "http_client" in options:
         http_client = options["http_client"]
@@ -332,27 +221,6 @@ def _coerce_openai_options(
             raise EmbeddingProviderConfigurationError(
                 provider,
                 "OpenAI embedding option '_strict_response_validation' must be a boolean.",
-            )
-
-    for key in ("organization", "project", "webhook_secret"):
-        if key in options:
-            value = options[key]
-            if isinstance(value, str):
-                result[key] = value
-            elif value is not None:
-                raise EmbeddingProviderConfigurationError(
-                    provider,
-                    f"OpenAI embedding option '{key}' must be a string or null.",
-                )
-
-    if "websocket_base_url" in options:
-        websocket_base_url = options["websocket_base_url"]
-        if isinstance(websocket_base_url, (str, URL)):
-            result["websocket_base_url"] = websocket_base_url
-        elif websocket_base_url is not None:
-            raise EmbeddingProviderConfigurationError(
-                provider,
-                "OpenAI embedding option 'websocket_base_url' must be a string, httpx.URL, or null.",
             )
 
     return result

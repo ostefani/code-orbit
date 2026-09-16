@@ -19,6 +19,7 @@ from agent.chat import (
     ProviderAuthenticationError,
     ProviderConfigurationError,
     ProviderRateLimitError,
+    ProviderRequestError,
     ProviderUnavailableError,
     UnsupportedChatProviderError,
     build_chat_adapter,
@@ -615,6 +616,48 @@ def test_chat_factory_rejects_openai_errors(monkeypatch) -> None:
         )
 
     AsyncOpenAI.error = None
+    asyncio.run(adapter.aclose())
+
+
+@pytest.mark.parametrize(
+    ("status_code", "expected_exception"),
+    [
+        (429, ProviderRateLimitError),
+        (401, ProviderAuthenticationError),
+        (403, ProviderAuthenticationError),
+        (500, ProviderUnavailableError),
+        (404, ProviderRequestError),
+    ],
+)
+def test_openai_chat_maps_status_code_errors(
+    monkeypatch, status_code: int, expected_exception
+) -> None:
+    AsyncOpenAI, _, _ = _install_fake_openai(monkeypatch)
+    status_error_cls = openai_provider._APIStatusError
+    AsyncOpenAI.error = status_error_cls("status failure", status_code=status_code)
+
+    adapter = OpenAIChatAdapter(
+        ChatProviderConfig(
+            provider="openai",
+            api_base="http://chat.example/v1",
+            api_key=SecretStr("chat-secret"),
+            model="chat-model",
+            context_window=4096,
+            streaming=True,
+            options={},
+        )
+    )
+
+    with pytest.raises(expected_exception):
+        asyncio.run(
+            adapter.complete(
+                [ChatMessage(role="user", content="hello")],
+                generation=ChatGenerationSettings(
+                    max_tokens=8,
+                    temperature=0.2,
+                ),
+            )
+        )
     asyncio.run(adapter.aclose())
 
 

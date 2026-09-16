@@ -12,6 +12,7 @@ from agent.embeddings import (
     EmbeddingProviderConfig,
     EmbeddingProviderConfigurationError,
     EmbeddingProviderRateLimitError,
+    EmbeddingProviderRequestError,
     EmbeddingProviderUnavailableError,
     OpenAICompatibleEmbeddingClient,
     UnsupportedEmbeddingProviderError,
@@ -344,6 +345,38 @@ def test_embedding_factory_maps_provider_exceptions(
         asyncio.run(create_embedding_adapter(config))
 
     assert excinfo.value.provider == "openai"
+
+
+@pytest.mark.parametrize(
+    ("status_code", "expected_exception"),
+    [
+        (429, EmbeddingProviderRateLimitError),
+        (401, EmbeddingProviderAuthenticationError),
+        (403, EmbeddingProviderAuthenticationError),
+        (500, EmbeddingProviderUnavailableError),
+        (404, EmbeddingProviderRequestError),
+    ],
+)
+def test_openai_embedding_maps_status_code_errors(
+    monkeypatch, status_code: int, expected_exception
+) -> None:
+    AsyncOpenAI, _, _ = _install_fake_openai(monkeypatch)
+    status_error_cls = openai_provider._APIStatusError
+    AsyncOpenAI.error = status_error_cls("status failure", status_code=status_code)
+
+    adapter = OpenAIEmbeddingAdapter(
+        EmbeddingProviderConfig(
+            provider="openai",
+            api_base="http://embeddings.example/v1",
+            api_key="embedding-secret",
+            model="embed-model",
+            options={},
+        )
+    )
+
+    with pytest.raises(expected_exception):
+        asyncio.run(adapter.embed(["hello"]))
+    asyncio.run(adapter.aclose())
 
 
 def test_embedding_factory_loads_builder_without_cache(monkeypatch) -> None:
