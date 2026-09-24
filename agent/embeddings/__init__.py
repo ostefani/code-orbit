@@ -1,7 +1,6 @@
 from .cache import (
     DEFAULT_CACHE_DIR,
     DEFAULT_CACHE_FILENAME,
-    LEGACY_CACHE_FILENAME,
     EmbeddingCache,
     default_embedding_cache_path,
 )
@@ -27,7 +26,6 @@ from .types import CodeChunk, ChunkEmbedding, EmbeddingSearchResult, FileEmbeddi
 __all__ = [
     "DEFAULT_CACHE_DIR",
     "DEFAULT_CACHE_FILENAME",
-    "LEGACY_CACHE_FILENAME",
     "DEFAULT_CHUNK_CHAR_LIMIT",
     "EmbeddingCache",
     "EmbeddingAdapter",
