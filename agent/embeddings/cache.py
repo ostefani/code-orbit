@@ -1,4 +1,3 @@
-import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -11,7 +10,6 @@ from .types import ChunkEmbedding, FileEmbeddingRecord
 
 DEFAULT_CACHE_DIR = ".code-orbit"
 DEFAULT_CACHE_FILENAME = "embeddings_cache.npz"
-LEGACY_CACHE_FILENAME = "embeddings_cache.json"
 _CACHE_FORMAT_VERSION = 2
 
 
@@ -25,19 +23,12 @@ class EmbeddingCache:
     @classmethod
     def load(cls, path: Path) -> EmbeddingCache:
         if not path.exists():
-            legacy_path = _legacy_cache_sibling_path(path)
-            if legacy_path.exists():
-                cache = _load_legacy_json_cache(legacy_path)
-                if cache is not None:
-                    return cache
             return cls()
 
-        if _looks_like_npz(path):
-            cache = _load_npz_cache(path)
-            if cache is not None:
-                return cache
+        if not _looks_like_npz(path):
+            return cls()
 
-        cache = _load_legacy_json_cache(path)
+        cache = _load_npz_cache(path)
         if cache is not None:
             return cache
 
@@ -70,15 +61,6 @@ class EmbeddingCache:
 def default_embedding_cache_path(root: str | Path) -> Path:
     root_path = Path(root).resolve()
     return root_path / DEFAULT_CACHE_DIR / DEFAULT_CACHE_FILENAME
-
-
-def _legacy_embedding_cache_path(root: str | Path) -> Path:
-    root_path = Path(root).resolve()
-    return root_path / DEFAULT_CACHE_DIR / LEGACY_CACHE_FILENAME
-
-
-def _legacy_cache_sibling_path(path: Path) -> Path:
-    return path.parent / LEGACY_CACHE_FILENAME
 
 
 def _looks_like_npz(path: Path) -> bool:
@@ -146,38 +128,6 @@ def _serialize_cache_arrays(
         vectors_array = np_module.empty((0, 0), dtype=np_module.float64)
 
     return metadata, vectors_array
-
-
-def _load_legacy_json_cache(path: Path) -> EmbeddingCache | None:
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-
-    files: dict[str, FileEmbeddingRecord] = {}
-    for rel_path, payload in raw.get("files", {}).items():
-        chunks = tuple(
-            ChunkEmbedding(
-                index=int(chunk["index"]),
-                vector=tuple(float(value) for value in chunk["vector"]),
-                start_line=int(chunk["start_line"]),
-                end_line=int(chunk["end_line"]),
-                content_hash=str(chunk["content_hash"]),
-            )
-            for chunk in payload.get("chunks", [])
-        )
-        files[rel_path] = FileEmbeddingRecord(
-            path=rel_path,
-            sha256=str(payload.get("sha256", "")),
-            chunks=chunks,
-        )
-
-    return EmbeddingCache(
-        version=int(raw.get("version", _CACHE_FORMAT_VERSION)),
-        model=str(raw.get("model", "")),
-        api_base=str(raw.get("api_base", "")),
-        files=files,
-    )
 
 
 def _load_npz_cache(path: Path) -> EmbeddingCache | None:

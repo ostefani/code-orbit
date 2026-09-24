@@ -6,11 +6,7 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from ..config import Config
-from .cache import (
-    EmbeddingCache,
-    _legacy_embedding_cache_path,
-    default_embedding_cache_path,
-)
+from .cache import EmbeddingCache, default_embedding_cache_path
 from .adapters import EmbeddingAdapter
 from .chunking import chunk_file
 from .factory import create_embedding_adapter
@@ -109,13 +105,8 @@ async def build_embedding_index(
     """
     root_path = Path(root).resolve()
     cache_file = cache_path or default_embedding_cache_path(root_path)
-    cache_load_path = cache_file
-    if cache_path is None and not cache_file.exists():
-        legacy_cache_file = _legacy_embedding_cache_path(root_path)
-        if legacy_cache_file.exists():
-            cache_load_path = legacy_cache_file
 
-    cache = EmbeddingCache.load(cache_load_path)
+    cache = EmbeddingCache.load(cache_file)
     if not cache.is_compatible(config):
         cache = EmbeddingCache(
             model=config.embedding_model,
@@ -240,7 +231,7 @@ async def build_embedding_index(
 
         # Dirty-check: skip the full .npz rewrite when nothing changed and a
         # cache file already exists. A missing file is always (re)written so
-        # fresh checkouts and legacy-JSON migrations materialize it once.
+        # fresh checkouts materialize it once.
         if updated_files or stale_paths or not cache_file.exists():
             cache.save(cache_file)
         vector_store = VectorStore(cache.files.values())
