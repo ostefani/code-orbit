@@ -1,5 +1,5 @@
 # Project local history
-.code-orbit/history.json
+.wepaircode/history.json
 
 # Python
 __pycache__/
@@ -37,8 +37,8 @@ config.yaml.local
 .idea/
 
 .DS_Store
-.code-orbit
-.code-orbit-history
+.wepaircode
+.wepaircode-history
 config.local.yaml
 
 INNER_DOC/

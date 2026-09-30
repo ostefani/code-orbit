@@ -1,11 +1,11 @@
-# ◉ CodeOrbit
+# ◉ WePairCode
 
 ![Python Version](https://img.shields.io/badge/python-3.14-blue)
 ![Backend](https://img.shields.io/badge/backend-Local--LLM-orange)
 ![Interface](https://img.shields.io/badge/UI-Rich-green)
 ![Type](https://img.shields.io/badge/type-CLI-informational)
 ![License](https://img.shields.io/badge/license-MIT-success)
-![Visitors](https://visitor-badge.laobi.icu/badge?page_id=ostefani.code-orbit)
+![Visitors](https://visitor-badge.laobi.icu/badge?page_id=ostefani.wepaircode)
 
 **Key Rotation Note:** New signature keys effective Sep 16, 2026. Legacy keys are no longer active on this profile. Commits signed before that date may appear Unverified as a result of the rotation.
 
@@ -32,7 +32,7 @@ chat provider         ← provider-selected chat adapter powers planning/editing
 architect plan        ← high-level JSON plan with files, goals, and reasoning
     │
     ▼
-review / edit plan     ← user can edit .code-orbit/plan.json before approval
+review / edit plan     ← user can edit .wepaircode/plan.json before approval
     │
     ▼
 coder response        ← exact file replacements from the approved plan
@@ -58,8 +58,8 @@ Install from a release or from source using the setup steps below.
 
 ```bash
 # 1. Clone
-git clone https://github.com/ostefani/code-orbit
-cd code-orbit
+git clone https://github.com/ostefani/wepaircode
+cd wepaircode
 
 # 2. Create virtual environment
 python3 -m venv .venv
@@ -119,17 +119,17 @@ Chat lifecycle at a glance:
 - `create_chat_adapter()` is the startup convenience path that combines build,
   validation, and optional probe.
 
-Set `chat_probe_on_startup: true` if you want Code Orbit to make one live chat
+Set `chat_probe_on_startup: true` if you want WePairCode to make one live chat
 provider readiness check at startup to verify credentials and reachability.
 For OpenAI-compatible providers this is a live `models.list()` request, so
 leave it off to keep startup cheap.
-Set `embedding_probe_on_startup: true` if you want Code Orbit to make one live
+Set `embedding_probe_on_startup: true` if you want WePairCode to make one live
 embedding request at startup to verify credentials and reachability. Leave it
 off to keep startup cheap and let the first semantic operation hit the backend.
 
 ### Using other local providers (Optional)
 
-Code Orbit still works with any OpenAI-compatible local server.
+WePairCode still works with any OpenAI-compatible local server.
 
 **Ollama**
 
@@ -165,13 +165,13 @@ python main.py --dir . --prompt "" --tree
 python main.py --dir . --prompt "..." --config config.local.yaml
 ```
 
-When you edit the plan, Code Orbit reads `EDITOR` as a command line rather than a shell string, so values like `vim -u NONE` or `code --wait` work. The launcher is currently tuned for Unix-like environments; if Windows support becomes a goal, the editor parsing strategy will need a small portability review because `shlex.split()` uses POSIX rules.
+When you edit the plan, WePairCode reads `EDITOR` as a command line rather than a shell string, so values like `vim -u NONE` or `code --wait` work. The launcher is currently tuned for Unix-like environments; if Windows support becomes a goal, the editor parsing strategy will need a small portability review because `shlex.split()` uses POSIX rules.
 
 Tokens are counted using `tokenizer_backend: estimate`. If you want to learn more on how to use tokenizers and improve tokens counting see TOKEN_COUNTING.md.
 
 ## Public API
 
-Code Orbit now exposes a small Python API for external runners and other Python consumers.
+WePairCode now exposes a small Python API for external runners and other Python consumers.
 
 ```python
 from pathlib import Path
@@ -249,7 +249,7 @@ chat_provider_options: {} # provider-specific SDK kwargs
 
 For personal overrides without affecting git, use `config.local.yaml` (already in `.gitignore`).
 
-Code Orbit also stores runtime artifacts under `.code-orbit/`, including the embeddings cache and prompt history. That directory is ignored in this repo by default, so you should not commit those generated files.
+WePairCode also stores runtime artifacts under `.wepaircode/`, including the embeddings cache and prompt history. That directory is ignored in this repo by default, so you should not commit those generated files.
 
 ## Testing
 
@@ -262,7 +262,7 @@ python3 main.py
 
 ## Recommended models
 
-These models are optimized for the agentic workflows, long context, and structured JSON output required by Code Orbit.
+These models are optimized for the agentic workflows, long context, and structured JSON output required by WePairCode.
 
 | Model             | Size            | Context | Notes                                                                                     |
 | :---------------- | :-------------- | :------ | :---------------------------------------------------------------------------------------- |
@@ -298,7 +298,7 @@ llama-server \
 ## Project structure
 
 ```
-code-orbit/
+wepaircode/
 ├── main.py              # CLI wrapper, history, prompt handling
 ├── api/                 # Public request / result / status models
 ├── agent/

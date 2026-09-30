@@ -123,7 +123,7 @@ def test_async_event_queue_close_terminates_when_full() -> None:
 
 
 def test_logging_subscriber_emits_json() -> None:
-    logger = logging.getLogger("test.code_orbit.events")
+    logger = logging.getLogger("test.wepaircode.events")
     logger.handlers.clear()
     logger.propagate = False
     logger.setLevel(logging.INFO)
@@ -214,7 +214,7 @@ def test_event_bus_isolates_subscriber_failures() -> None:
 
 
 def test_logging_formatter_preserves_utf8() -> None:
-    logger = logging.getLogger("test.code_orbit.utf8")
+    logger = logging.getLogger("test.wepaircode.utf8")
     logger.handlers.clear()
     logger.propagate = False
     logger.setLevel(logging.INFO)
@@ -287,8 +287,8 @@ def test_build_event_logger_uses_rotating_file_handler(tmp_path: Path) -> None:
         log_dir = tmp_path / "custom-logs"
         other_dir = tmp_path / "other-logs"
 
-        assert logger.name.startswith("code_orbit.events.")
-        assert other.name.startswith("code_orbit.events.")
+        assert logger.name.startswith("wepaircode.events.")
+        assert other.name.startswith("wepaircode.events.")
         assert other is not logger
         assert other.name != logger.name
         assert len(logger.handlers) == 1
@@ -341,7 +341,7 @@ def test_build_event_logger_uses_rotating_file_handler(tmp_path: Path) -> None:
 
 
 def test_configure_event_logger_rejects_reconfiguration(tmp_path: Path) -> None:
-    logger = logging.getLogger("test.code_orbit.events.reconfigure")
+    logger = logging.getLogger("test.wepaircode.events.reconfigure")
     prior_handlers = logger.handlers[:]
     logger.handlers.clear()
 

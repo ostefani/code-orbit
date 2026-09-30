@@ -171,7 +171,7 @@ def test_embedding_cache_ignores_non_npz_file(tmp_path: Path) -> None:
 def test_embedding_cache_ignores_legacy_json_sibling_for_missing_npz(
     tmp_path: Path,
 ) -> None:
-    cache_path = tmp_path / ".code-orbit" / "embeddings_cache.npz"
+    cache_path = tmp_path / ".wepaircode" / "embeddings_cache.npz"
     cache_path.parent.mkdir()
     legacy_path = cache_path.parent / "embeddings_cache.json"
     legacy_path.write_text('{"version": 1, "files": {}}', encoding="utf-8")
@@ -185,7 +185,7 @@ def test_build_embedding_sync_does_not_reuse_legacy_json_cache(
 ) -> None:
     _write_codebase(tmp_path)
     config = Config(ignore_patterns=[".git", "node_modules"])
-    legacy_cache_dir = tmp_path / ".code-orbit"
+    legacy_cache_dir = tmp_path / ".wepaircode"
     legacy_cache_dir.mkdir()
     (legacy_cache_dir / "embeddings_cache.json").write_text(
         '{"version": 1, "files": {}}', encoding="utf-8"
