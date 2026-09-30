@@ -4,7 +4,7 @@ body = """
 {% for group, commits in commits | group_by(attribute="group") %}
 ### {{ group }}
 {% for commit in commits %}
-- {{ commit.message }} ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/ostefani/code-orbit/commit/{{ commit.id }}))
+- {{ commit.message }} ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/ostefani/wepaircode/commit/{{ commit.id }}))
 {%- endfor %}
 {% endfor %}
 """

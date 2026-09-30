@@ -8,7 +8,7 @@ from ..config import Config
 from .types import ChunkEmbedding, FileEmbeddingRecord
 
 
-DEFAULT_CACHE_DIR = ".code-orbit"
+DEFAULT_CACHE_DIR = ".wepaircode"
 DEFAULT_CACHE_FILENAME = "embeddings_cache.npz"
 _CACHE_FORMAT_VERSION = 2
 

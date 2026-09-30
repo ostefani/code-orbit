@@ -224,7 +224,7 @@ async def run_workflow(
     event_bus.subscribe(CliEventRenderer(console_obj))
     event_bus.subscribe(
         LoggingEventSubscriber(
-            build_event_logger(log_dir=Path(target_path) / ".code-orbit")
+            build_event_logger(log_dir=Path(target_path) / ".wepaircode")
         )
     )
 
@@ -274,7 +274,7 @@ async def run_workflow(
 
     console_obj.print(
         Panel.fit(
-            f"[bold blue]Code Orbit[/bold blue]\n"
+            f"[bold blue]WePairCode[/bold blue]\n"
             f"[dim]Target :[/dim] [green]{target_path}[/green]\n"
             f"[dim]Model  :[/dim] [magenta]{config.chat_api_base} ({config.chat_model})[/magenta]\n"
             f"[dim]Prompt :[/dim] [yellow]{prompt}[/yellow]",

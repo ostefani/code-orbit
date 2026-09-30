@@ -968,7 +968,7 @@ def test_open_plan_in_editor_parses_modified_plan(monkeypatch, tmp_path) -> None
         ],
     )
 
-    temp_path = tmp_path / "code-orbit-plan.json"
+    temp_path = tmp_path / "wepaircode-plan.json"
 
     def fake_run(cmd, check=False):
         assert cmd[:2] == ["vim", "-u"]
@@ -985,12 +985,12 @@ def test_open_plan_in_editor_parses_modified_plan(monkeypatch, tmp_path) -> None
     assert approved.tasks[0].files == ["src/app.py", "agent/llm.py"]
 
 
-def test_history_is_saved_under_code_orbit(monkeypatch, tmp_path: Path) -> None:
+def test_history_is_saved_under_wepaircode(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.chdir(tmp_path)
 
     save_history("Add logging")
 
-    history_path = tmp_path / ".code-orbit" / "history.json"
+    history_path = tmp_path / ".wepaircode" / "history.json"
     assert history_path.exists()
     assert json.loads(history_path.read_text(encoding="utf-8")) == ["Add logging"]
 
@@ -998,7 +998,7 @@ def test_history_is_saved_under_code_orbit(monkeypatch, tmp_path: Path) -> None:
 def test_history_loads_legacy_file_on_first_run(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.chdir(tmp_path)
 
-    legacy_path = tmp_path / ".code-orbit-history"
+    legacy_path = tmp_path / ".wepaircode-history"
     legacy_path.write_text(
         json.dumps(["Legacy prompt", "Older prompt"]),
         encoding="utf-8",

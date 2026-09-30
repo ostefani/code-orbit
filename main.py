@@ -20,9 +20,9 @@ from rich import print as rprint
 from workflow import WorkflowError, run_workflow
 
 
-HISTORY_DIR = Path(".code-orbit")
+HISTORY_DIR = Path(".wepaircode")
 HISTORY_FILE = HISTORY_DIR / "history.json"
-LEGACY_HISTORY_FILE = Path(".code-orbit-history")
+LEGACY_HISTORY_FILE = Path(".wepaircode-history")
 
 
 def parse_args() -> argparse.Namespace:
@@ -77,7 +77,7 @@ def parse_args() -> argparse.Namespace:
         "--version",
         "-v",
         action="version",
-        version=f"code-orbit {version('code-orbit')}",
+        version=f"wepaircode {version('wepaircode')}",
     )
     return parser.parse_args()
 

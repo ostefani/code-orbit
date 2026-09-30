@@ -27,7 +27,7 @@ DEFAULT_IGNORE_PATTERNS: tuple[str, ...] = (
     ".venv",
     "venv",
     "env",
-    ".code-orbit",
+    ".wepaircode",
     "dist",
     "build",
     "*.egg-info",
@@ -135,8 +135,8 @@ class Config(BaseModel):
         patterns = normalized.get("ignore_patterns")
         if patterns is not None:
             normalized_patterns = tuple(patterns)
-            if ".code-orbit" not in normalized_patterns:
-                normalized_patterns = normalized_patterns + (".code-orbit",)
+            if ".wepaircode" not in normalized_patterns:
+                normalized_patterns = normalized_patterns + (".wepaircode",)
             normalized["ignore_patterns"] = normalized_patterns
 
         if normalized.get("chat_context_window") is None:

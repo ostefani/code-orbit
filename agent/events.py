@@ -294,7 +294,7 @@ class DeferredRotatingFileHandler(RotatingFileHandler):
 
 def _resolve_log_dir(log_dir: Path | str | None) -> Path:
     if log_dir is None:
-        return (Path.cwd() / ".code-orbit").resolve()
+        return (Path.cwd() / ".wepaircode").resolve()
     return Path(log_dir).expanduser().resolve()
 
 
@@ -303,7 +303,7 @@ def _build_event_logger_name(log_dir: Path) -> str:
         str(log_dir).encode("utf-8"),
         usedforsecurity=False,
     ).hexdigest()[:12]
-    return f"code_orbit.events.{digest}"
+    return f"wepaircode.events.{digest}"
 
 
 def build_event_log_handler(log_dir: Path) -> DeferredRotatingFileHandler:

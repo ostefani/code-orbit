@@ -20,7 +20,7 @@ def build_architect_prompt(prompt: str, execution_feedback: str | None = None) -
 
 
 def create_plan_draft_path() -> Path:
-    fd, temp_name = tempfile.mkstemp(prefix="code-orbit-plan-", suffix=".json")
+    fd, temp_name = tempfile.mkstemp(prefix="wepaircode-plan-", suffix=".json")
     os.close(fd)
     return Path(temp_name)
 
