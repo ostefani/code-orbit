@@ -1,5 +1,6 @@
 import importlib
 from collections.abc import Callable
+from ipaddress import ip_address
 from urllib.parse import urlparse
 
 from ..config import Config
@@ -17,23 +18,21 @@ _EMBEDDING_PROVIDER_BUILDERS: dict[str, str] = {
     "openai": "agent.embeddings.providers.openai.OpenAIEmbeddingAdapter",
 }
 
-# Placeholder key for local OpenAI-compatible servers (llama.cpp, Ollama,
-# LM Studio) that ignore auth but sit behind an SDK requiring a non-empty key.
 LOCAL_DUMMY_API_KEY = "dummy"
 
 
 def _is_local_api_base(api_base: str) -> bool:
-    """Return True when ``api_base`` targets a loopback host."""
     try:
         host = urlparse(api_base).hostname or ""
     except ValueError:
         return False
-    host = host.lower()
-    if host in ("localhost", "::1"):
+    host = host.lower().rstrip(".")
+    if host == "localhost":
         return True
-    if host.startswith("127."):
-        return True
-    return False
+    try:
+        return ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def build_embedding_provider_config(config: Config) -> EmbeddingProviderConfig:
@@ -43,8 +42,6 @@ def build_embedding_provider_config(config: Config) -> EmbeddingProviderConfig:
         if key not in RESERVED_EMBEDDING_PROVIDER_OPTION_KEYS
     }
 
-    # Only substitute the placeholder for loopback targets so a missing key
-    # against a remote endpoint still fails fast.
     api_key = config.embedding_api_key or config.api_key
     if not api_key and _is_local_api_base(config.embedding_api_base):
         api_key = LOCAL_DUMMY_API_KEY

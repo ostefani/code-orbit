@@ -66,7 +66,7 @@ python3.14 -m venv .venv
 source .venv/bin/activate
 
 # 3. Install dependencies
-python3.14 -m pip install -r requirements.txt
+python -m pip install -r requirements.txt
 python -m pytest tests/ -q
 
 
