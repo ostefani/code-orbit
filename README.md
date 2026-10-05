@@ -62,12 +62,11 @@ git clone https://github.com/ostefani/wepaircode
 cd wepaircode
 
 # 2. Create virtual environment
-python3 -m venv .venv
+python3.14 -m venv .venv
 source .venv/bin/activate
 
 # 3. Install dependencies
-pip install -r requirements.txt
-python3.14 -m pip install -r requirements.txt
+python -m pip install -r requirements.txt
 python -m pytest tests/ -q
 
 

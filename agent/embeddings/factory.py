@@ -1,5 +1,7 @@
 import importlib
 from collections.abc import Callable
+from ipaddress import ip_address
+from urllib.parse import urlparse
 
 from ..config import Config
 from .adapters import (
@@ -16,16 +18,37 @@ _EMBEDDING_PROVIDER_BUILDERS: dict[str, str] = {
     "openai": "agent.embeddings.providers.openai.OpenAIEmbeddingAdapter",
 }
 
+LOCAL_DUMMY_API_KEY = "dummy"
+
+
+def _is_local_api_base(api_base: str) -> bool:
+    try:
+        host = urlparse(api_base).hostname or ""
+    except ValueError:
+        return False
+    host = host.lower().rstrip(".")
+    if host == "localhost":
+        return True
+    try:
+        return ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def build_embedding_provider_config(config: Config) -> EmbeddingProviderConfig:
     options = {
         key: value
         for key, value in dict(config.embedding_provider_options).items()
         if key not in RESERVED_EMBEDDING_PROVIDER_OPTION_KEYS
     }
+
+    api_key = config.embedding_api_key or config.api_key
+    if not api_key and _is_local_api_base(config.embedding_api_base):
+        api_key = LOCAL_DUMMY_API_KEY
     return EmbeddingProviderConfig(
         provider=config.embedding_provider,
         api_base=config.embedding_api_base,
-        api_key=config.embedding_api_key or config.api_key,
+        api_key=api_key,
         model=config.embedding_model,
         options=options,
     )

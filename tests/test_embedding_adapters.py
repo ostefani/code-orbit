@@ -296,6 +296,42 @@ def test_embedding_factory_falls_back_to_primary_api_key(monkeypatch) -> None:
     assert instance.calls[0]["input"] == ["hello"]
 
 
+def test_embedding_factory_defaults_to_dummy_api_key_for_local_servers(
+    monkeypatch,
+) -> None:
+    AsyncOpenAI, _, _ = _install_fake_openai(monkeypatch)
+
+    config = Config(
+        embedding_provider="openai",
+        api_key="",
+        embedding_api_key="",
+        embedding_api_base="http://localhost:8082/v1",
+        embedding_model="embed-model",
+    )
+
+    adapter = asyncio.run(create_embedding_adapter(config))
+    asyncio.run(adapter.embed(["hello"]))
+
+    instance = AsyncOpenAI.instances[0]
+    assert instance.kwargs["api_key"] == embeddings_factory.LOCAL_DUMMY_API_KEY
+    assert instance.calls[0]["input"] == ["hello"]
+    asyncio.run(adapter.aclose())
+
+
+def test_embedding_factory_preserves_empty_api_key_for_remote_servers() -> None:
+    config = Config(
+        embedding_provider="openai",
+        api_key="",
+        embedding_api_key="",
+        embedding_api_base="https://api.openai.com/v1",
+        embedding_model="embed-model",
+    )
+
+    provider_config = embeddings_factory.build_embedding_provider_config(config)
+
+    assert provider_config.api_key == ""
+
+
 def test_embedding_factory_probes_when_configured(monkeypatch) -> None:
     AsyncOpenAI, _, _ = _install_fake_openai(monkeypatch)
 
